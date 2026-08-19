@@ -1,6 +1,7 @@
 import type {Database} from 'better-sqlite3';
 import {migration as initialSchema} from './migrations/001-initial-schema.js';
 import {migration as invasionMessaging} from './migrations/002-invasion-messaging.js';
+import {migration as roundTracking} from './migrations/004-round-tracking.js';
 import {migration as warsOfAttrition} from './migrations/003-wars-of-attrition.js';
 
 /** One forward-only schema change. */
@@ -18,6 +19,7 @@ export const MIGRATIONS: readonly Migration[] = [
   initialSchema,
   invasionMessaging,
   warsOfAttrition,
+  roundTracking,
 ];
 
 const MIGRATIONS_TABLE = `

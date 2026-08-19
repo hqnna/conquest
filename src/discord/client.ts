@@ -4,6 +4,7 @@ import {COMMANDS_BY_NAME} from '../commands/index.js';
 import {removePlayerFromCountry} from '../commands/leave.js';
 import type {CommandContext} from '../commands/types.js';
 import {errorReply} from './ui.js';
+import {handleResetButton, isResetConfirmation} from './game-buttons.js';
 import {handleVoteButton} from './vote-buttons.js';
 
 /**
@@ -78,7 +79,11 @@ export function registerInteractionHandler(
     if (interaction.isButton()) {
       if (!interaction.guild) return;
       try {
-        await handleVoteButton(ctx.db, interaction.guild, interaction);
+        if (isResetConfirmation(interaction.customId)) {
+          await handleResetButton(ctx.db, interaction.guild, interaction);
+        } else {
+          await handleVoteButton(ctx.db, interaction.guild, interaction);
+        }
       } catch (error) {
         console.error(`Button ${interaction.customId} failed:`, error);
         if (!interaction.replied && !interaction.deferred) {

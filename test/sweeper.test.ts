@@ -239,6 +239,7 @@ describe('sweep', () => {
       warsUnanswered: 0,
       roundsFought: 0,
       warsEnded: 0,
+      roundsWon: 0,
     });
   });
 

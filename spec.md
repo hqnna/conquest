@@ -103,7 +103,7 @@ An invasion is not settled in one roll. Once a defense takes the field, the two 
 
 ## Win condition and reset
 
-- Configurable **domination threshold** (default: 10 territories). When a country's territory count reaches the threshold, or when it is the only active country in the guild for 72 consecutive hours, it wins.
+- Configurable **domination threshold** (default: 10 territories). When a country's territory count reaches the threshold, or when it is the only active country in the guild for 72 consecutive hours, it wins. The last-country clock is stored as a timestamp and restarts from scratch whenever anyone else joins the world, so a country cannot bank time towards a walkover between rivals coming and going.
 - On win: post a victory announcement in the game log (winner, roster, territory list, game duration), then **reset**: delete **all country roles and all country channels** (active and archived), wipe all countries/players/resources/invasions for the guild, keep the setup config, and start fresh. Players must `/join` again.
 - Admin commands: `/game reset` (manual reset, confirm with a button), `/game config threshold:<n>` (set domination threshold).
 
@@ -186,7 +186,7 @@ Render a flat world map image showing the game state, attached to the `/map` rep
 
 ## Data model (SQLite)
 
-- `guild_config(guild_id PK, category_id, log_channel_id, domination_threshold, created_at)`
+- `guild_config(guild_id PK, category_id, log_channel_id, domination_threshold, created_at, round_started_at, sole_active_code NULL, sole_active_since NULL)` — `round_started_at` is when the current round began (setup, or the last reset), so a victory can report how long it took.
 - `countries(guild_id, code PK w/ guild, name, status ENUM[inactive, active, defeated], owner_code NULL, channel_id NULL, role_id NULL, food, gold, troops, activated_at, protected_until, invade_cooldown_until, defense_immunity_until)` — defeated countries keep `channel_id` (the archive) but have `role_id` NULL after their role is deleted.
 - `players(guild_id, user_id PK w/ guild, country_code, joined_at, rejoin_cooldown_until)`
 - `gather_cooldowns(guild_id, user_id, command, next_available_at)`

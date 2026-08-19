@@ -12,6 +12,12 @@ export interface GuildConfig {
   dominationThreshold: number;
   /** When `/setup` first ran for this guild. */
   createdAt: number;
+  /** When the current round began: setup, or the last reset. */
+  roundStartedAt: number;
+  /** The only country left standing, if there is exactly one. */
+  soleActiveCode: string | null;
+  /** Since when it has been alone. Being alone long enough wins the round. */
+  soleActiveSince: number | null;
 }
 
 interface GuildConfigRow {
@@ -20,6 +26,9 @@ interface GuildConfigRow {
   log_channel_id: string;
   domination_threshold: number;
   created_at: number;
+  round_started_at: number | null;
+  sole_active_code: string | null;
+  sole_active_since: number | null;
 }
 
 function toGuildConfig(row: GuildConfigRow): GuildConfig {
@@ -29,6 +38,9 @@ function toGuildConfig(row: GuildConfigRow): GuildConfig {
     logChannelId: row.log_channel_id,
     dominationThreshold: row.domination_threshold,
     createdAt: row.created_at,
+    roundStartedAt: row.round_started_at ?? row.created_at,
+    soleActiveCode: row.sole_active_code,
+    soleActiveSince: row.sole_active_since,
   };
 }
 
@@ -61,8 +73,9 @@ export function upsertGuildConfig(
   const now = input.now ?? Date.now();
   db.prepare(
     `INSERT INTO guild_config
-       (guild_id, category_id, log_channel_id, domination_threshold, created_at)
-     VALUES (?, ?, ?, ?, ?)
+       (guild_id, category_id, log_channel_id, domination_threshold, created_at,
+        round_started_at)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        category_id = excluded.category_id,
        log_channel_id = excluded.log_channel_id`,
@@ -71,6 +84,7 @@ export function upsertGuildConfig(
     input.categoryId,
     input.logChannelId,
     GAME.defaultDominationThreshold,
+    now,
     now,
   );
   // The row is guaranteed to exist immediately after the upsert.
@@ -91,6 +105,41 @@ export function setDominationThreshold(
   if (result.changes === 0) {
     throw new Error(`No Conquest configuration for guild ${guildId}`);
   }
+}
+
+/** Every guild that has run `/setup`, for the sweeper's global passes. */
+export function getGuildIds(db: Database): string[] {
+  return (
+    db.prepare('SELECT guild_id FROM guild_config').all() as Array<{
+      guild_id: string;
+    }>
+  ).map(row => row.guild_id);
+}
+
+/**
+ * Records which country is the only one left, and since when.
+ *
+ * Passing null clears it, which is what happens the moment anybody else joins
+ * the world: the clock starts again from scratch rather than resuming.
+ */
+export function setSoleActive(
+  db: Database,
+  guildId: string,
+  code: string | null,
+  since: number | null,
+): void {
+  db.prepare(
+    'UPDATE guild_config SET sole_active_code = ?, sole_active_since = ? WHERE guild_id = ?',
+  ).run(code, code === null ? null : since, guildId);
+}
+
+/** Starts a fresh round, keeping the guild's setup and its tuning. */
+export function startRound(db: Database, guildId: string, now: number): void {
+  db.prepare(
+    `UPDATE guild_config
+        SET round_started_at = ?, sole_active_code = NULL, sole_active_since = NULL
+      WHERE guild_id = ?`,
+  ).run(now, guildId);
 }
 
 /** Removes a guild's configuration, e.g. when Conquest is kicked. */

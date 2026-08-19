@@ -34,6 +34,9 @@ describe('guild config', () => {
       logChannelId: 'log-1',
       dominationThreshold: GAME.defaultDominationThreshold,
       createdAt: 1_000,
+      roundStartedAt: 1_000,
+      soleActiveCode: null,
+      soleActiveSince: null,
     });
     expect(getGuildConfig(db, 'guild-1')).toEqual(config);
   });

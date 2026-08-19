@@ -17,12 +17,15 @@ import {
   listUnansweredInvasions,
   listWarsDueATick,
 } from '../db/invasions.js';
+import {getGuildIds} from '../db/guild-config.js';
 import {
   endWar,
   expireDefenseProposal,
   failAttack,
   fightRoundAndReport,
 } from './invasion-flow.js';
+import {concludeRound} from './round-flow.js';
+import {checkVictory} from './victory.js';
 
 /** What one sweep settled. */
 export interface SweepResult {
@@ -36,6 +39,8 @@ export interface SweepResult {
   roundsFought: number;
   /** Wars ended by a side failing to reinforce in time. */
   warsEnded: number;
+  /** Rounds won and wiped clean. */
+  roundsWon: number;
 }
 
 /** Resolves a guild, or undefined if Conquest is no longer in it. */
@@ -64,6 +69,7 @@ export async function sweep(
   let warsUnanswered = 0;
   let roundsFought = 0;
   let warsEnded = 0;
+  let roundsWon = 0;
 
   for (const invasion of listExpiredAttackVotes(db, now)) {
     const guild = await guildOf(client, invasion.guildId);
@@ -138,12 +144,28 @@ export async function sweep(
     }
   }
 
+  // Victory is checked last, so a conquest resolved by this same sweep is
+  // counted before the round is judged.
+  for (const guildId of getGuildIds(db)) {
+    const victory = checkVictory(db, guildId, now);
+    if (!victory) continue;
+    const guild = await guildOf(client, guildId);
+    if (!guild) continue;
+    try {
+      await concludeRound(db, guild, victory, now);
+      roundsWon++;
+    } catch (error) {
+      console.error(`Could not end the round in ${guildId}:`, error);
+    }
+  }
+
   return {
     votesExpired,
     proposalsExpired,
     warsUnanswered,
     roundsFought,
     warsEnded,
+    roundsWon,
   };
 }
 

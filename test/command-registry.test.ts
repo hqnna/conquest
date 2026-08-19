@@ -10,6 +10,7 @@ describe('command registry', () => {
       'country',
       'defend',
       'farm',
+      'game',
       'invade',
       'join',
       'leave',

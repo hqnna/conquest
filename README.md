@@ -9,12 +9,11 @@ one country dominates, the round ends and the game resets.
 
 ## Status
 
-Phases 1 to 4 of the build order are implemented: the Nix toolchain and
+Phases 1 to 5 of the build order are implemented: the Nix toolchain and
 project scaffold, the SQLite layer with the full game schema, per-guild
 configuration and `/setup`, countries with their role and channel lifecycle,
-resource gathering, and the whole invasion pipeline — attack vote, escrow,
-defence window, resolution, and conquest transfer. The win condition, reset
-flow, map rendering, and `/help` follow.
+resource gathering, the whole invasion pipeline as a war of attrition, and the
+win condition with its reset flow. Map rendering and `/help` follow.
 
 | Command | Who | Effect |
 |---|---|---|
@@ -28,6 +27,8 @@ flow, map rendering, and `/help` follow.
 | `/defend troops:<n> [gold] [food]` | Player | Put a defence to your country while under attack |
 | `/reinforce troops:<n> [gold] [food]` | Player | Send fresh forces to a war your country is losing |
 | `/surrender` | Player | Give up a war your country cannot continue |
+| `/game reset` | Admin | Wipe the world and start a fresh round (confirmed) |
+| `/game config threshold:<n>` | Admin | Change how much territory wins the round |
 | `/map` | Anyone | Who holds what (text standings until rendering lands) |
 
 ## Development
@@ -132,6 +133,23 @@ identical.
 Every deadline is an absolute timestamp in SQLite, and a sweeper settles
 whatever has expired. Restarting mid-war loses nothing but the seconds
 Conquest was down.
+
+### How a round ends
+
+A country wins by **domination** — holding the threshold in territory,
+10 by default — or by being the **last one standing** for long enough that
+nobody is left to challenge it. The last-country clock is a stored timestamp
+that restarts from scratch whenever anyone else joins the world, so time
+cannot be banked between rivals coming and going.
+
+Winning wipes the world: a victory announcement naming the victors, their
+conquests and how long the round ran, then every country channel and role is
+deleted and all countries, players, cooldowns, and wars go with them. The
+category, the game log, and the domination threshold survive, so nobody has to
+run `/setup` again — players simply `/join` a fresh world.
+
+`/game reset` does the same on demand behind a confirmation button, and
+`/game config threshold:<n>` retunes the win condition mid-round.
 
 ## Architecture
 
