@@ -54,18 +54,20 @@ run without them and names what is missing.
 
 ### Setting up a server
 
-An admin with Manage Server runs `/setup category:<category>`. Conquest stores
-the category, creates a public `#war-room` game log, and posts there. Country
-channels are created inside the category as countries activate.
+An admin with Manage Server runs `/setup category:<category>`. Conquest creates
+a `#war-room` game log pinned to the top of that category, with the country
+channels appearing underneath it as countries activate. The war room is
+read-only: everyone can read it and react, only Conquest can post.
 
-The game log is created **outside** the chosen category on purpose: Discord
-caps a category at 50 channels, archived channels of defeated countries keep
-their slot, and Conquest never frees one. Reserving all 50 slots for countries
-means late-game joins increasingly funnel players into countries that already
-exist, rather than founding new ones — intended, but worth knowing.
+Discord caps a category at 50 channels. The war room takes one, archived
+channels of defeated countries keep theirs, and Conquest never frees a slot, so
+capacity only shrinks over a round. Late-game joins therefore funnel players
+into countries that already exist rather than founding new ones — intended, but
+worth knowing.
 
-Re-running `/setup` re-points the category and reuses the existing game log if
-it still exists. It does not reset the domination threshold or wipe the game.
+Re-running `/setup` re-points the category and reuses the existing game log,
+moving it back to the top of the category and restoring its read-only
+permissions. It does not reset the domination threshold or wipe the game.
 
 ## Architecture
 

@@ -8,6 +8,7 @@ import {
 import type {CategoryChannel, Guild} from 'discord.js';
 import {DISCORD_LIMITS} from '../src/config/constants.js';
 import {
+  logChannelOverwrites,
   missingBotPermissions,
   remainingCategorySlots,
   resolveExistingLogChannel,
@@ -82,8 +83,38 @@ describe('resolveExistingLogChannel', () => {
   });
 });
 
+describe('logChannelOverwrites', () => {
+  const [everyone, conquest] = logChannelOverwrites('everyone-role', 'bot-id');
+
+  it('lets everyone read and react but not post', () => {
+    expect(everyone.id).toBe('everyone-role');
+    expect(everyone.allow).toContain(PermissionFlagsBits.ViewChannel);
+    expect(everyone.allow).toContain(PermissionFlagsBits.ReadMessageHistory);
+    expect(everyone.allow).toContain(PermissionFlagsBits.AddReactions);
+    expect(everyone.deny).toContain(PermissionFlagsBits.SendMessages);
+  });
+
+  it('denies every way of starting a thread, which would be writable', () => {
+    expect(everyone.deny).toContain(PermissionFlagsBits.CreatePublicThreads);
+    expect(everyone.deny).toContain(PermissionFlagsBits.CreatePrivateThreads);
+    expect(everyone.deny).toContain(PermissionFlagsBits.SendMessagesInThreads);
+  });
+
+  it('leaves Conquest able to post and attach the map', () => {
+    expect(conquest.id).toBe('bot-id');
+    expect(conquest.allow).toContain(PermissionFlagsBits.SendMessages);
+    expect(conquest.allow).toContain(PermissionFlagsBits.AttachFiles);
+    expect(conquest.deny).toBeUndefined();
+  });
+
+  it('grants view explicitly, so a private category stays public here', () => {
+    expect(everyone.allow).toContain(PermissionFlagsBits.ViewChannel);
+    expect(conquest.allow).toContain(PermissionFlagsBits.ViewChannel);
+  });
+});
+
 describe('remainingCategorySlots', () => {
-  it('counts every existing channel against the cap', () => {
+  it('counts every existing channel — game log included — against the cap', () => {
     expect(remainingCategorySlots(fakeCategory(0))).toBe(
       DISCORD_LIMITS.channelsPerCategory,
     );

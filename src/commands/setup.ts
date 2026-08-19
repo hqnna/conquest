@@ -11,6 +11,7 @@ import type {
   ChatInputCommandInteraction,
   Guild,
   GuildBasedChannel,
+  OverwriteData,
   TextChannel,
 } from 'discord.js';
 import {CHANNELS, DISCORD_LIMITS, GAME} from '../config/constants.js';
@@ -66,9 +67,48 @@ export function resolveExistingLogChannel(
 }
 
 /**
- * How many country channels still fit in the category. Archived channels from
- * defeated countries count against Discord's cap and Conquest never frees a
- * slot, so this shrinks over a round.
+ * Permission overwrites that make the game log a read-only broadcast channel:
+ * everyone can read it and react, only Conquest can post.
+ *
+ * The view permission is granted explicitly rather than inherited, so the log
+ * stays public even when the category it sits in is not.
+ */
+export function logChannelOverwrites(
+  everyoneRoleId: string,
+  conquestId: string,
+): OverwriteData[] {
+  return [
+    {
+      id: everyoneRoleId,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.AddReactions,
+      ],
+      deny: [
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.SendMessagesInThreads,
+        PermissionFlagsBits.CreatePublicThreads,
+        PermissionFlagsBits.CreatePrivateThreads,
+      ],
+    },
+    {
+      id: conquestId,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.AttachFiles,
+        PermissionFlagsBits.EmbedLinks,
+      ],
+    },
+  ];
+}
+
+/**
+ * How many country channels still fit in the category. The game log and the
+ * archived channels of defeated countries occupy slots too, and Conquest never
+ * frees one, so this only shrinks over a round.
  */
 export function remainingCategorySlots(category: CategoryChannel): number {
   return Math.max(
@@ -138,19 +178,38 @@ export const setupCommand: Command = {
     const existing = getGuildConfig(ctx.db, guild.id);
 
     let logChannel = resolveExistingLogChannel(guild, existing?.logChannelId);
-    let logChannelCreated = false;
+    const logChannelCreated = !logChannel;
+
+    // Channels already in the category before Conquest touched it. A reused
+    // game log is Conquest's own and is not worth warning about.
+    const preexisting = resolved.children.cache.filter(
+      channel => channel.id !== logChannel?.id,
+    ).size;
+
+    const overwrites = logChannelOverwrites(guild.roles.everyone.id, me.id);
     if (!logChannel) {
       logChannel = await guild.channels.create({
         name: CHANNELS.gameLogName,
         type: ChannelType.GuildText,
-        // Deliberately outside the category: Discord caps a category at 50
-        // channels and archived country channels never free their slot, so
-        // every slot in the category is reserved for countries.
+        parent: resolved.id,
+        // Above every country channel: Discord appends new channels to the end
+        // of a category, so the log stays pinned at the top as countries
+        // activate.
+        position: 0,
+        permissionOverwrites: overwrites,
         topic:
           'Conquest game log — declarations, battles, conquests, and resets.',
         reason: 'Conquest setup: public game log',
       });
-      logChannelCreated = true;
+    } else {
+      // Re-running /setup repairs the log: move it into the (possibly new)
+      // category, back to the top, and restore read-only access.
+      await logChannel.edit({
+        parent: resolved.id,
+        position: 0,
+        permissionOverwrites: overwrites,
+        reason: 'Conquest setup: game log placement and permissions',
+      });
     }
 
     const config = upsertGuildConfig(ctx.db, {
@@ -159,12 +218,12 @@ export const setupCommand: Command = {
       logChannelId: logChannel.id,
     });
 
-    const occupied = resolved.children.cache.size;
     const warning =
-      occupied > 0
-        ? `⚠️ **${resolved.name}** already holds ${occupied} channel${occupied === 1 ? '' : 's'}. ` +
-          'Conquest will leave them alone, but they count against Discord’s 50-channel limit — ' +
-          `only ${remainingCategorySlots(resolved)} more countries can be activated.`
+      preexisting > 0
+        ? `⚠️ **${resolved.name}** already holds ${preexisting} other channel${preexisting === 1 ? '' : 's'}. ` +
+          'Conquest will leave them alone, but they count against Discord’s ' +
+          `${DISCORD_LIMITS.channelsPerCategory}-channel limit — only ` +
+          `${remainingCategorySlots(resolved)} more countries can be activated.`
         : '';
 
     await logChannel
@@ -188,9 +247,9 @@ export const setupCommand: Command = {
           '## Conquest is set up',
           [
             `**Country channels:** ${resolved}`,
-            `**Game log:** ${logChannel}${logChannelCreated ? ' (created)' : ' (reused)'}`,
+            `**Game log:** ${logChannel}${logChannelCreated ? ' (created)' : ' (reused)'} — read-only, pinned to the top of the category`,
             `**Domination threshold:** ${config.dominationThreshold} territories`,
-            `**Country slots available:** ${remainingCategorySlots(resolved)} of ${DISCORD_LIMITS.channelsPerCategory}`,
+            `**Country slots left:** ${remainingCategorySlots(resolved)} of ${DISCORD_LIMITS.channelsPerCategory} (the game log takes one)`,
           ].join('\n'),
           warning,
           `Players can now run \`/join\`. Change the win condition later with \`/game config threshold:<n>\` (default ${GAME.defaultDominationThreshold}).`,
