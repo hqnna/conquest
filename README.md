@@ -9,10 +9,12 @@ one country dominates, the round ends and the game resets.
 
 ## Status
 
-Phases 1 to 3 of the build order are implemented: the Nix toolchain and
+Phases 1 to 4 of the build order are implemented: the Nix toolchain and
 project scaffold, the SQLite layer with the full game schema, per-guild
 configuration and `/setup`, countries with their role and channel lifecycle,
-and resource gathering. Invasions and map rendering follow.
+resource gathering, and the whole invasion pipeline — attack vote, escrow,
+defence window, resolution, and conquest transfer. The win condition, reset
+flow, map rendering, and `/help` follow.
 
 | Command | Who | Effect |
 |---|---|---|
@@ -22,6 +24,8 @@ and resource gathering. Invasions and map rendering follow.
 | `/country [name]` | Anyone | Players, territories, and status of a country |
 | `/farm`, `/mine`, `/recruit` | Player | Gather for your country, on per-player cooldowns |
 | `/resources` | Player | Your country stockpile and your own cooldowns |
+| `/invade country:<t> troops:<n> [gold] [food]` | Player | Put an invasion to your country |
+| `/defend troops:<n> [gold] [food]` | Player | Put a defence to your country while under attack |
 | `/map` | Anyone | Who holds what (text standings until rendering lands) |
 
 ## Development
@@ -100,6 +104,30 @@ The alpha-2 code is the join between that file, every `country_code` in the
 database, and the map SVG that arrives with map rendering — those must stay
 identical.
 
+### How a war runs
+
+1. `/invade` opens a vote in the attacker's channel. Nothing is spent yet, and
+   the caller's own approval is already counted — a one-player country passes
+   on it alone.
+2. On a majority the stake is escrowed immediately, the war is declared in the
+   game log with the stake in full, and the defender's channel is pinged.
+   Marching voids the attacker's own new-country protection.
+3. Defenders have a window to `/defend`. One proposal is voted on at a time;
+   a rejected one can be replaced while the window lasts. An approved defence
+   is escrowed too.
+4. The battle is fought when the window closes, not when the defence passes,
+   so defenders cannot probe the timing. Supplies add up to +50% power, home
+   ground adds a fifth, luck swings it by a tenth either way, and ties go to
+   the defender.
+5. A conquest absorbs the country whole: its stockpile is looted, its players
+   are moved, its territories change hands, and its channel becomes a
+   read-only archive the conquerors can read. A failed invasion hands the
+   attacker's entire stake — troops included — to the defender.
+
+Every deadline is an absolute timestamp in SQLite, and a sweeper settles
+whatever has expired. Restarting mid-war loses nothing but the seconds
+Conquest was down.
+
 ## Architecture
 
 - **All state is per-guild.** Multiple servers run isolated games in one process.
@@ -113,6 +141,12 @@ identical.
   cooldown, window, and threshold, and `/help` renders its numbers from it.
 - **Autocomplete is UX, not validation.** It answers from the database and
   cache alone, and every command decides again server-side.
+- **Stateless components.** Vote buttons encode the invasion, side, and choice
+  in their `customId` and revalidate against the database on every click, so
+  they survive restarts with no collector to lose.
+- **Escrow is transactional.** Staking, resolution, looting, and the conquest
+  transfer are each one database transaction — a partial conquest would be a
+  corrupt game.
 - **Components V2 everywhere.** Every Conquest message is built from containers,
   never legacy embeds.
 
