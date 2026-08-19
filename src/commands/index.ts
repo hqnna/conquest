@@ -2,6 +2,7 @@ import {countryCommand} from './country.js';
 import {defendCommand} from './defend.js';
 import {farmCommand, mineCommand, recruitCommand} from './gather.js';
 import {gameCommand} from './game.js';
+import {helpCommand} from './help.js';
 import {invadeCommand} from './invade.js';
 import {joinCommand} from './join.js';
 import {leaveCommand} from './leave.js';
@@ -29,6 +30,7 @@ export const COMMANDS: readonly Command[] = [
   surrenderCommand,
   gameCommand,
   mapCommand,
+  helpCommand,
 ];
 
 /** Commands indexed by name, for interaction routing. */

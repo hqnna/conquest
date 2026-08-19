@@ -1,8 +1,9 @@
 import {describe, expect, it} from 'vitest';
 import type {ContainerBuilder} from 'discord.js';
-import {countryCard} from '../src/commands/country.js';
+import {countryCard, warLine} from '../src/commands/country.js';
 import {findCountry} from '../src/data/countries.js';
 import type {CountryState} from '../src/db/countries.js';
+import type {Invasion} from '../src/db/invasions.js';
 
 const NOW = 1_700_000_000_000;
 const FRANCE = findCountry('FR')!;
@@ -106,5 +107,95 @@ describe('countryCard', () => {
 
   it('warns when a country has lost its last player', () => {
     expect(card({members: []})).toContain('about to be disbanded');
+  });
+});
+
+describe('warLine', () => {
+  function invasion(overrides: Partial<Invasion> = {}): Invasion {
+    return {
+      id: 1,
+      guildId: 'g1',
+      attackerCode: 'FR',
+      defenderCode: 'DE',
+      attack: {troops: 20, gold: 0, food: 0},
+      defense: null,
+      attackField: {troops: 20, gold: 0, food: 0},
+      defenseField: {troops: 0, gold: 0, food: 0},
+      status: 'war',
+      attackVoteDeadline: NOW,
+      defenseDeadline: NOW + 1_000,
+      nextTickAt: NOW + 100,
+      reinforcingSide: null,
+      reinforceDeadline: null,
+      rounds: 3,
+      attackMessageId: null,
+      createdAt: NOW,
+      resolvedAt: null,
+      ...overrides,
+    };
+  }
+
+  it('tells the two sides of a vote apart', () => {
+    const vote = invasion({status: 'attack_vote'});
+    expect(warLine('FR', vote)).toContain('whether to invade');
+    expect(warLine('DE', vote)).toContain('as a target');
+  });
+
+  it('tells the two sides of an unanswered invasion apart', () => {
+    const marching = invasion({status: 'defense_window'});
+    expect(warLine('FR', marching)).toContain('Marching on');
+    expect(warLine('DE', marching)).toContain('a defence must be raised');
+    expect(warLine('DE', marching)).toMatch(/<t:\d+:R>/);
+  });
+
+  it('counts the rounds of an ongoing war', () => {
+    expect(warLine('FR', invasion())).toContain('3 rounds in');
+    expect(warLine('FR', invasion({rounds: 1}))).toContain('1 round in');
+  });
+
+  it('says which side has been fought to nothing', () => {
+    const spent = invasion({
+      status: 'reinforcing',
+      reinforcingSide: 'defender',
+    });
+    expect(warLine('DE', spent)).toContain('Fought to nothing');
+    expect(warLine('FR', spent)).toContain('nothing left in the field');
+  });
+
+  it('names the enemy, whichever side is asking', () => {
+    expect(warLine('FR', invasion())).toContain('🇩🇪 Germany');
+    expect(warLine('DE', invasion())).toContain('🇫🇷 France');
+  });
+});
+
+describe('countryCard at war', () => {
+  it('leads with the war a country is fighting', () => {
+    const text = card({
+      invasion: {
+        id: 1,
+        guildId: 'g1',
+        attackerCode: 'FR',
+        defenderCode: 'DE',
+        attack: {troops: 20, gold: 0, food: 0},
+        defense: null,
+        attackField: {troops: 20, gold: 0, food: 0},
+        defenseField: {troops: 0, gold: 0, food: 0},
+        status: 'war',
+        attackVoteDeadline: NOW,
+        defenseDeadline: NOW + 1_000,
+        nextTickAt: NOW + 100,
+        reinforcingSide: null,
+        reinforceDeadline: null,
+        rounds: 2,
+        attackMessageId: null,
+        createdAt: NOW,
+        resolvedAt: null,
+      },
+    });
+    expect(text).toContain('At war with 🇩🇪 Germany');
+  });
+
+  it('says nothing about a war when there is none', () => {
+    expect(card()).not.toContain('At war');
   });
 });

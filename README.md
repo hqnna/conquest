@@ -9,12 +9,11 @@ one country dominates, the round ends and the game resets.
 
 ## Status
 
-Phases 1 to 5 of the build order are implemented: the Nix toolchain and
-project scaffold, the SQLite layer with the full game schema, per-guild
-configuration and `/setup`, countries with their role and channel lifecycle,
-resource gathering, the whole invasion pipeline as a war of attrition, the win
-condition with its reset flow, and map rendering. `/help` and the final polish
-pass follow.
+The whole build order is implemented: the Nix toolchain and project scaffold,
+the SQLite layer with the full game schema, per-guild configuration and
+`/setup`, countries with their role and channel lifecycle, resource gathering,
+the invasion pipeline as a war of attrition, the win condition with its reset
+flow, map rendering, and the `/help` system.
 
 | Command | Who | Effect |
 |---|---|---|
@@ -31,6 +30,7 @@ pass follow.
 | `/game reset` | Admin | Wipe the world and start a fresh round (confirmed) |
 | `/game config threshold:<n>` | Admin | Change how much territory wins the round |
 | `/map [region]` | Anyone | The rendered world map, with the standings as its legend |
+| `/help [topic]` | Anyone | Paginated help, with its numbers read from the tunables |
 
 ## Development
 
@@ -67,6 +67,11 @@ nix develop -c pnpm dev
 | `DISCORD_GUILD_ID` | — | Register commands to one guild instead of globally |
 | `CONQUEST_DB_PATH` | `conquest.db` | SQLite file holding all game state |
 | `CONQUEST_DEV_MODE` | unset | `1` shortens every game timer for playtesting |
+
+Dev mode divides every duration by 120, which turns a multi-day round into a
+playable few minutes: gathering every 15 seconds, a 12-minute defence window,
+war rounds every 30 seconds. `/help` reports the shortened numbers honestly,
+because it reads them from the same module the game does.
 
 Conquest needs **Manage Channels** and **Manage Roles**; `/setup` refuses to
 run without them and names what is missing.

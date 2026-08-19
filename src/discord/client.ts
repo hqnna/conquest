@@ -5,6 +5,8 @@ import {removePlayerFromCountry} from '../commands/leave.js';
 import type {CommandContext} from '../commands/types.js';
 import {errorReply} from './ui.js';
 import {handleResetButton, isResetConfirmation} from './game-buttons.js';
+import {handleHelpButton, handleHelpSelect} from './help-buttons.js';
+import {isHelpComponent} from './help-ui.js';
 import {handleVoteButton} from './vote-buttons.js';
 
 /**
@@ -79,7 +81,9 @@ export function registerInteractionHandler(
     if (interaction.isButton()) {
       if (!interaction.guild) return;
       try {
-        if (isResetConfirmation(interaction.customId)) {
+        if (isHelpComponent(interaction.customId)) {
+          await handleHelpButton(interaction);
+        } else if (isResetConfirmation(interaction.customId)) {
           await handleResetButton(ctx.db, interaction.guild, interaction);
         } else {
           await handleVoteButton(ctx.db, interaction.guild, interaction);
@@ -96,6 +100,15 @@ export function registerInteractionHandler(
             )
             .catch(() => undefined);
         }
+      }
+      return;
+    }
+
+    if (interaction.isStringSelectMenu()) {
+      try {
+        await handleHelpSelect(interaction);
+      } catch (error) {
+        console.error(`Select ${interaction.customId} failed:`, error);
       }
       return;
     }

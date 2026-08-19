@@ -11,6 +11,7 @@ describe('command registry', () => {
       'defend',
       'farm',
       'game',
+      'help',
       'invade',
       'join',
       'leave',

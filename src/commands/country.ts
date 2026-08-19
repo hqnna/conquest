@@ -18,9 +18,48 @@ import {
 import type {CountryData} from '../data/countries.js';
 import {getCountry, listCountries, listTerritories} from '../db/countries.js';
 import type {CountryState} from '../db/countries.js';
+import {getPendingInvasionFor} from '../db/invasions.js';
+import type {Invasion} from '../db/invasions.js';
 import {getPlayer, listCountryMembers} from '../db/players.js';
 import {ACCENT, container, relativeTime, v2EditReply} from '../discord/ui.js';
 import type {Command, CommandContext} from './types.js';
+
+/**
+ * Describes the war a country is caught up in, if any.
+ *
+ * A war is public: which countries are fighting, and how far along it is, is
+ * exactly what an onlooker needs to judge who is worth attacking. What each
+ * side actually committed stays between them.
+ */
+export function warLine(code: string, invasion: Invasion): string {
+  const attacking = invasion.attackerCode === code;
+  const enemy = findCountry(
+    attacking ? invasion.defenderCode : invasion.attackerCode,
+  );
+  const them = enemy ? countryLabel(enemy) : '?';
+
+  switch (invasion.status) {
+    case 'attack_vote':
+      return attacking
+        ? `🗳️ Voting on whether to invade ${them}`
+        : `🗳️ Being voted on as a target by ${them}`;
+    case 'defense_window':
+      return attacking
+        ? `⚔️ Marching on ${them} — they have until ${relativeTime(invasion.defenseDeadline ?? 0)} to answer`
+        : `🛡️ Invaded by ${them} — a defence must be raised by ${relativeTime(invasion.defenseDeadline ?? 0)}`;
+    case 'war':
+      return `⚔️ At war with ${them}, ${invasion.rounds} round${invasion.rounds === 1 ? '' : 's'} in`;
+    case 'reinforcing': {
+      const spent =
+        invasion.reinforcingSide === (attacking ? 'attacker' : 'defender');
+      return spent
+        ? `🩸 Fought to nothing against ${them} — reinforce or the war is lost`
+        : `⚔️ At war with ${them}, who has nothing left in the field`;
+    }
+    default:
+      return `⚔️ At war with ${them}`;
+  }
+}
 
 /** Renders the timers that decide whether a country can fight right now. */
 function statusLines(state: CountryState, now: number): string[] {
@@ -55,6 +94,8 @@ export function countryCard(input: {
   members: string[];
   territories: CountryState[];
   viewerIsMember: boolean;
+  /** The war it is caught up in, if any. */
+  invasion?: Invasion;
   now: number;
 }): ContainerBuilder {
   const {country, state, members, territories} = input;
@@ -97,10 +138,13 @@ export function countryCard(input: {
           .join(', ')
       : 'None yet.';
 
-  const timers = statusLines(state, input.now);
+  const timers = [
+    ...(input.invasion ? [warLine(country.code, input.invasion)] : []),
+    ...statusLines(state, input.now),
+  ];
 
   return container(
-    ACCENT.neutral,
+    input.invasion ? ACCENT.warning : ACCENT.neutral,
     `## ${countryLabel(country)}`,
     [
       `**Players (${members.length}):** ${roster}`,
@@ -194,6 +238,7 @@ export const countryCommand: Command = {
           members: listCountryMembers(ctx.db, guild.id, country.code),
           territories: listTerritories(ctx.db, guild.id, country.code),
           viewerIsMember: player?.countryCode === country.code,
+          invasion: getPendingInvasionFor(ctx.db, guild.id, country.code),
           now: Date.now(),
         }),
       ),
