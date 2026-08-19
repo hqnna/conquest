@@ -62,8 +62,13 @@ export const INVASIONS = {
   luckRange: {min: 0.9, max: 1.1},
   /** Supplies stop adding power past this fraction. */
   maxSupplyBonus: 0.5,
-  /** Supplies per troop needed to reach {@link maxSupplyBonus}. */
-  suppliesPerTroopForMaxBonus: 2,
+  /**
+   * Divisor in the supply bonus: `(gold + food) / (divisor x troops)`, capped
+   * at {@link maxSupplyBonus}. With the default of 2 the cap is reached at one
+   * supply per troop, and anything past that adds no power while still being
+   * at stake.
+   */
+  supplyRatioDivisor: 2,
   /** Fraction of committed troops the attacker loses when they win. */
   attackerCasualtyRate: 0.5,
   /** Fraction of committed troops the defender loses when they win. */
