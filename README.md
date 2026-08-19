@@ -9,11 +9,10 @@ one country dominates, the round ends and the game resets.
 
 ## Status
 
-Phases 1 and 2 of the build order are implemented: the Nix toolchain, the
+Phases 1 to 3 of the build order are implemented: the Nix toolchain and
 project scaffold, the SQLite layer with the full game schema, per-guild
-configuration and `/setup`, and now countries — `/join`, `/leave`,
-`/country`, a text-only `/map`, and the country role and channel lifecycle.
-Resources, invasions, and map rendering follow.
+configuration and `/setup`, countries with their role and channel lifecycle,
+and resource gathering. Invasions and map rendering follow.
 
 | Command | Who | Effect |
 |---|---|---|
@@ -21,6 +20,8 @@ Resources, invasions, and map rendering follow.
 | `/join country:<name>` | Anyone | Join a country, founding it if nobody has |
 | `/leave` | Player | Leave your country (24h rejoin cooldown) |
 | `/country [name]` | Anyone | Players, territories, and status of a country |
+| `/farm`, `/mine`, `/recruit` | Player | Gather for your country, on per-player cooldowns |
+| `/resources` | Player | Your country stockpile and your own cooldowns |
 | `/map` | Anyone | Who holds what (text standings until rendering lands) |
 
 ## Development
