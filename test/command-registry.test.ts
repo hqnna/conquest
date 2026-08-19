@@ -8,9 +8,13 @@ describe('command registry', () => {
   it('registers the commands this phase provides', () => {
     expect(payloads.map(payload => payload.name).sort()).toEqual([
       'country',
+      'farm',
       'join',
       'leave',
       'map',
+      'mine',
+      'recruit',
+      'resources',
       'setup',
     ]);
   });
