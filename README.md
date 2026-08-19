@@ -9,9 +9,19 @@ one country dominates, the round ends and the game resets.
 
 ## Status
 
-Phase 1 of the build order is implemented: the Nix toolchain, the project
-scaffold, the SQLite layer with the full game schema, per-guild configuration,
-and `/setup`. Countries, resources, invasions, and the map follow.
+Phases 1 and 2 of the build order are implemented: the Nix toolchain, the
+project scaffold, the SQLite layer with the full game schema, per-guild
+configuration and `/setup`, and now countries — `/join`, `/leave`,
+`/country`, a text-only `/map`, and the country role and channel lifecycle.
+Resources, invasions, and map rendering follow.
+
+| Command | Who | Effect |
+|---|---|---|
+| `/setup category:<cat>` | Admin | Configure the category and game log |
+| `/join country:<name>` | Anyone | Join a country, founding it if nobody has |
+| `/leave` | Player | Leave your country (24h rejoin cooldown) |
+| `/country [name]` | Anyone | Players, territories, and status of a country |
+| `/map` | Anyone | Who holds what (text standings until rendering lands) |
 
 ## Development
 
@@ -52,6 +62,12 @@ nix develop -c pnpm dev
 Conquest needs **Manage Channels** and **Manage Roles**; `/setup` refuses to
 run without them and names what is missing.
 
+It also needs the **Server Members Intent**, which is privileged: enable it
+under Bot → Privileged Gateway Intents in the developer portal. Conquest uses
+it to notice a player leaving the server — which releases their country, and
+disbands it if they were its last player — and to look members up when their
+country role changes. The Message Content intent is never used.
+
 ### Setting up a server
 
 An admin with Manage Server runs `/setup category:<category>`. Conquest creates
@@ -69,6 +85,20 @@ Re-running `/setup` re-points the category and reuses the existing game log,
 moving it back to the top of the category and restoring its read-only
 permissions. It does not reset the domination threshold or wipe the game.
 
+### Country data
+
+`src/data/countries.json` is the shipped list of ISO 3166-1 countries: code,
+name, flag emoji, and continent. It is generated and committed, so a running
+game cannot have the world shift under it:
+
+```sh
+nix develop -c pnpm generate-countries
+```
+
+The alpha-2 code is the join between that file, every `country_code` in the
+database, and the map SVG that arrives with map rendering — those must stay
+identical.
+
 ## Architecture
 
 - **All state is per-guild.** Multiple servers run isolated games in one process.
@@ -80,6 +110,8 @@ permissions. It does not reset the domination threshold or wipe the game.
   are no per-user channel overwrites.
 - **One tunables module.** `src/config/constants.ts` holds every yield, cost,
   cooldown, window, and threshold, and `/help` renders its numbers from it.
+- **Autocomplete is UX, not validation.** It answers from the database and
+  cache alone, and every command decides again server-side.
 - **Components V2 everywhere.** Every Conquest message is built from containers,
   never legacy embeds.
 
