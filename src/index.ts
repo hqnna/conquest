@@ -7,6 +7,7 @@ import {
   registerMemberHandler,
 } from './discord/client.js';
 import {loadEnv} from './env.js';
+import {startSweeper} from './game/sweeper.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -16,15 +17,20 @@ async function main(): Promise<void> {
   registerInteractionHandler(client, {db});
   registerMemberHandler(client, {db});
 
+  let stopSweeper: (() => void) | undefined;
   client.once(Events.ClientReady, ready => {
     console.log(
       `Conquest is online as ${ready.user.tag}` +
         (DEV_MODE ? ' (dev mode: timers are drastically shortened)' : ''),
     );
+    // Deadlines live in the database, so the sweeper picks up anything that
+    // expired while Conquest was down.
+    stopSweeper = startSweeper(db, client);
   });
 
   const shutdown = (signal: string) => {
     console.log(`Received ${signal}; shutting Conquest down.`);
+    stopSweeper?.();
     void client.destroy().finally(() => {
       db.close();
       process.exit(0);

@@ -4,6 +4,7 @@ import {COMMANDS_BY_NAME} from '../commands/index.js';
 import {removePlayerFromCountry} from '../commands/leave.js';
 import type {CommandContext} from '../commands/types.js';
 import {errorReply} from './ui.js';
+import {handleVoteButton} from './vote-buttons.js';
 
 /**
  * Creates the Conquest gateway client.
@@ -70,6 +71,26 @@ export function registerInteractionHandler(
         // Discord shows nothing rather than an error; an empty list is the
         // only graceful fallback.
         await interaction.respond([]).catch(() => undefined);
+      }
+      return;
+    }
+
+    if (interaction.isButton()) {
+      if (!interaction.guild) return;
+      try {
+        await handleVoteButton(ctx.db, interaction.guild, interaction);
+      } catch (error) {
+        console.error(`Button ${interaction.customId} failed:`, error);
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction
+            .reply(
+              errorReply(
+                'Conquest could not record that click.',
+                'Nothing was changed. Try again in a moment.',
+              ),
+            )
+            .catch(() => undefined);
+        }
       }
       return;
     }

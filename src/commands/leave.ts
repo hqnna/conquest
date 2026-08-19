@@ -9,7 +9,12 @@ import {countryLabel, findCountry} from '../data/countries.js';
 import {getCountry} from '../db/countries.js';
 import type {Database} from '../db/index.js';
 import {countCountryMembers, getPlayer, leaveCountry} from '../db/players.js';
+import {getPendingInvasionFor} from '../db/invasions.js';
+import {discardPlayerVotes} from '../db/votes.js';
 import {announce} from '../discord/log.js';
+import {stakeLine} from '../discord/invasion-ui.js';
+import {readAttackVote, readDefenseVote} from '../game/invasion-flow.js';
+import {cancelInvasion} from '../game/invasions.js';
 import {ACCENT, container, relativeTime, v2EditReply} from '../discord/ui.js';
 import {disbandCountry, revokeCountryRole} from '../game/country-lifecycle.js';
 import {decideLeave} from '../game/policy.js';
@@ -40,6 +45,11 @@ export async function removePlayerFromCountry(
   if (!decision.ok) return undefined;
 
   const state = getCountry(db, guild.id, decision.code);
+  const invasion = getPendingInvasionFor(db, guild.id, decision.code);
+
+  // Their ballots go with them, so any threshold is recounted over the
+  // players who are actually still there.
+  discardPlayerVotes(db, guild.id, userId);
   leaveCountry(db, {
     guildId: guild.id,
     userId,
@@ -58,6 +68,31 @@ export async function removePlayerFromCountry(
     }
   }
 
+  if (decision.deactivates && invasion) {
+    // Nobody is left to fight the war. Both sides get their stake back.
+    cancelInvasion(db, invasion, options.now);
+    await announce(
+      db,
+      guild,
+      container(
+        ACCENT.warning,
+        '## The war is called off',
+        `${countryName(invasion.attackerCode)} against ${countryName(invasion.defenderCode)} ends with nobody left to fight it.`,
+        invasion.status === 'defense_window'
+          ? `Every stake was returned, including ${stakeLine(invasion.attack)} from the attacker.`
+          : 'Nothing had been committed.',
+      ),
+    );
+  } else if (invasion) {
+    // The vote threshold moves with the country's size, so a departure can
+    // decide a vote that was still open.
+    if (invasion.status === 'attack_vote') {
+      await readAttackVote(db, guild, invasion, options.now);
+    } else {
+      await readDefenseVote(db, guild, invasion, options.now);
+    }
+  }
+
   if (decision.deactivates && state) {
     await disbandCountry(db, guild, state);
     const country = findCountry(decision.code);
@@ -73,6 +108,12 @@ export async function removePlayerFromCountry(
   }
 
   return {code: decision.code, disbanded: decision.deactivates};
+}
+
+/** A country's name for announcements, falling back to its code. */
+function countryName(code: string): string {
+  const country = findCountry(code);
+  return country ? countryLabel(country) : code;
 }
 
 export const leaveCommand: Command = {

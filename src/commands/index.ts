@@ -1,5 +1,7 @@
 import {countryCommand} from './country.js';
+import {defendCommand} from './defend.js';
 import {farmCommand, mineCommand, recruitCommand} from './gather.js';
+import {invadeCommand} from './invade.js';
 import {joinCommand} from './join.js';
 import {leaveCommand} from './leave.js';
 import {mapCommand} from './map.js';
@@ -19,6 +21,8 @@ export const COMMANDS: readonly Command[] = [
   mineCommand,
   recruitCommand,
   resourcesCommand,
+  invadeCommand,
+  defendCommand,
   mapCommand,
 ];
 
