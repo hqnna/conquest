@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Conquest** is a persistent, server-wide strategy game run by a Discord bot of the same name. Players join real-world countries, gather resources cooperatively in private country channels, and vote to invade other countries, staking troops and supplies of their choosing. Conquered countries are absorbed: their players join the winner, their stockpile is looted, and their territory is locked to the winner. Failed invasions hand the attacker's entire stake to the defender. The game ends when one country dominates, then resets automatically.
+**Conquest** is a persistent, server-wide strategy game run by a Discord bot of the same name. Players join real-world countries, gather resources cooperatively in private country channels, and vote to invade other countries, staking troops and supplies of their choosing. An invasion that is answered becomes a war of attrition fought over many rounds, until one side has nothing left in the field and must reinforce or give up. Conquered countries are absorbed: their players join the winner, their stockpile is looted, and their territory is locked to the winner. The game ends when one country dominates, then resets automatically.
 
 Use the name consistently: the bot's Discord identity, repo/package name (`conquest`), README, and all user-facing copy (help pages, game log posts, error messages) should say **Conquest** — never "the bot."
 
@@ -63,30 +63,41 @@ Three resource types, pooled at the **country level** (shared stockpile, since p
 
 ### Defending
 4. Defenders get a **defense window** (default 24h from declaration). Any defender may run `/defend troops:<amount> [gold:<amount>] [food:<amount>]` to propose a defense commitment (same stake structure), which opens a defense vote in their channel (same majority/button mechanics, window capped at the remaining defense time). Approved defense stakes are escrowed. Only one defense proposal may be pending at a time; a rejected proposal may be replaced by a new one within the window.
-5. If the window ends with no approved defense, defense = 0.
+5. If the window ends with **no approved defense**, the invasion is a walkover: the attacker wins by default and the country is absorbed as a **voluntary merge**. Nothing was fought, so the attacker's entire committed stake returns to its stockpile.
 
-### Resolution
-6. At the end of the defense window (resolve at window end regardless of when the defense vote passes, so defenders can't probe timing). **Supplies boost power**: committed gold+food act as war supplies with diminishing returns —
-   - `supplyBonus(side) = min((gold + food) / (2 × troops), 0.5)` — i.e. up to +50% power at 2 supplies per troop; beyond that, extra supplies add no power (but are still at stake).
-   - `attackPower = troops × (1 + supplyBonus) × random(0.9–1.1)`
-   - `defensePower = troops × (1 + supplyBonus) × 1.2 (home advantage) × random(0.9–1.1)`
-   - Higher power wins. Ties go to the defender. A zero-troop side has zero power regardless of supplies.
-7. **Attacker wins (conquest):**
-   - Attacker suffers 50% casualties on committed troops (rounded up); surviving troops return. Committed gold/food supplies are **consumed by the campaign** (not returned). Defender's committed stake is destroyed in the fighting.
-   - Defender's remaining (un-staked) stockpile is looted into the attacker's stockpile.
-   - All defender players are transferred into the attacker's country: remove the defeated role, assign the winner's role, post a welcome message in the winner's channel.
-   - The defeated country and **all territories it owned** become territories of the attacker (status `defeated`, owner = attacker).
-   - Defender's channel is archived read-only per Channels & roles (winner's role gains view access; defeated role deleted). Result announced in game log.
-8. **Defender wins:**
-   - **The attacker's entire committed stake is captured by the defender**: staked troops, gold, and food all transfer into the defender's stockpile (troops are captured/defect rather than destroyed). This replaces the old "invasion resources are lost" rule — failed invasions now directly strengthen the target, so overreaching is dangerous.
-   - Defender suffers 30% casualties on their committed troops (rounded up); the rest of their stake returns to their stockpile.
-   - No other changes. Result announced in game log, including the captured haul.
+### The war
+An invasion is not settled in one roll. Once a defense takes the field, the two committed forces grind each other down over many rounds until one of them has nothing left.
+
+6. **Power.** Committed gold+food act as war supplies with diminishing returns —
+   - `supplyBonus(side) = min((gold + food) / (2 × troops), 0.5)` — capped at +50% power, which the formula reaches at **one** supply per troop. Beyond that extra supplies add no power, but are still at stake.
+   - `power = troops × (1 + supplyBonus)`, and the defender's is multiplied by `1.2` for home advantage.
+   - A zero-troop side has zero power regardless of supplies: supplies do not fight, they make troops fight harder.
+7. **Rounds.** Every tick (default 1h) both sides lose a share of *everything* they committed — troops, gold, and food alike, each rolled separately with luck of 0.9–1.1.
+   - `lossRate(side) = clamp(0.15 × enemyPower / ownPower, 0.05, 0.5)` — an even war costs both sides 15% a round; being outgunned two to one costs double, while the stronger side pays half. The clamps keep a single round survivable and every war finite.
+   - Losses are computed for both sides from the same pre-tick state, so neither swings first and a mutual wipe-out is possible.
+   - Each round is announced in both country channels.
+8. **Reinforce or give up.** When a side's committed **troops** reach zero its force is spent, the fighting pauses, and its country is called on to answer within a reinforcement window (default 6h):
+   - `/reinforce troops:<n> [gold] [food]` opens a vote in that country's channel, by the same majority as any other commitment. Approved reinforcements are escrowed from the country's stockpile, join the field, and the fighting resumes.
+   - `/surrender` ends it immediately. So does letting the window run out: **silence is surrender**.
+   - If the country's stockpile is fully drained it has nothing to send, and the war is lost on the spot without waiting out the window.
+   - Only the side being asked may reinforce, and only while it is being asked. Reinforcement is the answer to a spent force, not a way to pour troops into a war at any moment.
+9. **Attacker gives up (or is fought dry) — invasion fails:**
+   - Whatever survives of the **attacker's** committed force marches home into its stockpile. It loses the war, not its army.
+   - Whatever survives of the **defender's** committed force returns to the defender's stockpile.
+   - The defender gets defense immunity; the attacker gets its invasion cooldown. No other changes. Result announced in game log.
+10. **Defender gives up (or is fought dry) — conquest:**
+    - Whatever survives of the attacker's committed force marches home.
+    - Whatever the **defender** still had committed is captured by the attacker, along with everything else it owned.
+    - Defender's remaining stockpile is looted into the attacker's stockpile.
+    - All defender players are transferred into the attacker's country: remove the defeated role, assign the winner's role, post a welcome message in the winner's channel.
+    - The defeated country and **all territories it owned** become territories of the attacker (status `defeated`, owner = attacker).
+    - Defender's channel is archived read-only per Channels & roles (winner's role gains view access; defeated role deleted). Result announced in game log.
 
 ### Cooldowns and protection
 - After an invasion resolves (win or lose), the **attacking** country cannot declare again for 12h.
 - A country that just successfully defended gets 12h of immunity from new invasions.
 - **New-country protection:** a freshly activated country cannot be invaded for 48h (it may still invade others, which immediately voids its protection).
-- All timers are stored as absolute timestamps in the DB. A periodic sweeper (every ~30s) checks for expired votes, defense windows, and protections; nothing may rely on in-memory timers alone, so the bot recovers cleanly from restarts.
+- All timers are stored as absolute timestamps in the DB. A periodic sweeper (every ~30s) checks for expired votes, defense windows, war rounds due, reinforcement deadlines, and protections; nothing may rely on in-memory timers alone, so the bot recovers cleanly from restarts.
 
 ---
 
@@ -109,6 +120,8 @@ Three resource types, pooled at the **country level** (shared stockpile, since p
 | `/resources` | Player | Show country stockpile + own cooldowns (ephemeral) |
 | `/invade country:<t> troops:<n> [gold] [food]` | Player | Start attack vote with a multi-resource stake |
 | `/defend troops:<n> [gold] [food]` | Player (under invasion) | Start defense vote with a multi-resource stake |
+| `/reinforce troops:<n> [gold] [food]` | Player (force spent) | Vote to send fresh forces and continue the war |
+| `/surrender` | Player (force spent) | Give up the war immediately |
 | `/map` | Anyone | Rendered world-map image + legend in one V2 card; see Map rendering below |
 | `/country [name]` | Anyone | Details for one country (players, territories, protection/cooldown status; stockpile visible only to its own members) |
 | `/help [topic]` | Anyone | Paginated V2 help pages; see Help system below |
@@ -177,8 +190,9 @@ Render a flat world map image showing the game state, attached to the `/map` rep
 - `countries(guild_id, code PK w/ guild, name, status ENUM[inactive, active, defeated], owner_code NULL, channel_id NULL, role_id NULL, food, gold, troops, activated_at, protected_until, invade_cooldown_until, defense_immunity_until)` — defeated countries keep `channel_id` (the archive) but have `role_id` NULL after their role is deleted.
 - `players(guild_id, user_id PK w/ guild, country_code, joined_at, rejoin_cooldown_until)`
 - `gather_cooldowns(guild_id, user_id, command, next_available_at)`
-- `invasions(id PK, guild_id, attacker_code, defender_code, attack_troops, attack_gold, attack_food, defense_troops NULL, defense_gold NULL, defense_food NULL, status ENUM[attack_vote, defense_window, resolved_attacker_win, resolved_defender_win, cancelled], attack_vote_deadline, defense_deadline, created_at, resolved_at)`
-- `votes(id PK, invasion_id, kind ENUM[attack, defense], user_id, choice ENUM[approve, reject], created_at)` — one row per voter per vote; changing a vote updates the row.
+- `invasions(id PK, guild_id, attacker_code, defender_code, attack_*, defense_* NULL, attack_field_*, defense_field_*, status ENUM[attack_vote, defense_window, war, reinforcing, resolved_attacker_win, resolved_defender_win, cancelled], attack_vote_deadline, defense_deadline, next_tick_at, reinforcing_side NULL, reinforce_deadline, rounds, attack_message_id, created_at, resolved_at)` — the `attack_*`/`defense_*` columns are everything a side has committed over the whole war and only grow with reinforcements; the `*_field_*` columns are what is still standing, and are what the rounds eat away.
+- `stake_proposals(id PK, invasion_id, side ENUM[attacker, defender], kind ENUM[defense, reinforcement], proposer_id, troops, gold, food, status ENUM[pending, approved, rejected, expired], vote_deadline, message_id, created_at, resolved_at)` — at most one pending proposal per invasion.
+- `votes(id PK, invasion_id, kind ENUM[attack, defense], user_id, choice ENUM[approve, reject], created_at)` — one row per voter per vote; changing a vote updates the row. `kind` is the side, so an attacker's reinforcement vote is an `attack` vote; opening a new proposal clears that side's previous round of votes.
 
 All state-mutating operations (escrow, resolution, transfers) must be wrapped in transactions.
 
@@ -200,7 +214,7 @@ All state-mutating operations (escrow, resolution, transfers) must be wrapped in
 - **Permissions failures:** if the bot lacks channel-management or **Manage Roles** permissions, fail loudly with an actionable error message. Validate both during `/setup`. Country roles must sit below the bot's highest role in the hierarchy (they will, since the bot creates them).
 - **Rate limits:** channel creation/edits, role creation/deletion, and especially **bulk role assignment during a conquest transfer** (every defeated player gets the winner's role) should be queued/serialized to respect Discord rate limits; a large transfer may take a minute — post a progress/"transfer complete" message.
 - **Announcements:** every state change that affects more than one country goes to the game log channel; country-internal events (votes, gather results) stay in country channels or ephemeral replies.
-- **Testing:** unit-test the resolution math, vote-threshold logic, and conquest transfer (players, territories, loot) with an in-memory DB. Provide a dev mode with drastically shortened timers for manual playtesting.
+- **Testing:** unit-test the attrition math (including that every war terminates), vote-threshold logic, and conquest transfer (players, territories, loot) with an in-memory DB. Provide a dev mode with drastically shortened timers for manual playtesting.
 
 ## Suggested build order
 
