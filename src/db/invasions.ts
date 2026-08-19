@@ -4,6 +4,8 @@ import type {Database} from 'better-sqlite3';
 export type InvasionStatus =
   | 'attack_vote'
   | 'defense_window'
+  | 'war'
+  | 'reinforcing'
   | 'resolved_attacker_win'
   | 'resolved_defender_win'
   | 'cancelled';
@@ -12,7 +14,12 @@ export type InvasionStatus =
 export const PENDING_STATUSES: readonly InvasionStatus[] = [
   'attack_vote',
   'defense_window',
+  'war',
+  'reinforcing',
 ];
+
+/** Which country a stake, a vote, or a surrender belongs to. */
+export type Side = 'attacker' | 'defender';
 
 /** A stake of troops and supplies committed to a battle. */
 export interface Stake {
@@ -27,13 +34,26 @@ export interface Invasion {
   guildId: string;
   attackerCode: string;
   defenderCode: string;
+  /** Everything the attacker has committed, reinforcements included. */
   attack: Stake;
-  /** The defence that was approved, or null if none ever was. */
+  /** Everything the defender has committed, or null if it never defended. */
   defense: Stake | null;
+  /** What the attacker still has standing on the field. */
+  attackField: Stake;
+  /** What the defender still has standing on the field. */
+  defenseField: Stake;
   status: InvasionStatus;
   attackVoteDeadline: number;
-  /** When the battle resolves; set once the attack vote passes. */
+  /** When the defender's chance to answer the invasion runs out. */
   defenseDeadline: number | null;
+  /** When the next round of fighting lands. */
+  nextTickAt: number | null;
+  /** Which side must reinforce or give up. */
+  reinforcingSide: Side | null;
+  /** When that side's silence becomes a surrender. */
+  reinforceDeadline: number | null;
+  /** Rounds fought so far. */
+  rounds: number;
   attackMessageId: string | null;
   createdAt: number;
   resolvedAt: number | null;
@@ -50,9 +70,19 @@ interface InvasionRow {
   defense_troops: number | null;
   defense_gold: number | null;
   defense_food: number | null;
+  attack_field_troops: number;
+  attack_field_gold: number;
+  attack_field_food: number;
+  defense_field_troops: number;
+  defense_field_gold: number;
+  defense_field_food: number;
   status: InvasionStatus;
   attack_vote_deadline: number;
   defense_deadline: number | null;
+  next_tick_at: number | null;
+  reinforcing_side: Side | null;
+  reinforce_deadline: number | null;
+  rounds: number;
   attack_message_id: string | null;
   created_at: number;
   resolved_at: number | null;
@@ -77,9 +107,23 @@ function toInvasion(row: InvasionRow): Invasion {
             gold: row.defense_gold ?? 0,
             food: row.defense_food ?? 0,
           },
+    attackField: {
+      troops: row.attack_field_troops,
+      gold: row.attack_field_gold,
+      food: row.attack_field_food,
+    },
+    defenseField: {
+      troops: row.defense_field_troops,
+      gold: row.defense_field_gold,
+      food: row.defense_field_food,
+    },
     status: row.status,
     attackVoteDeadline: row.attack_vote_deadline,
     defenseDeadline: row.defense_deadline,
+    nextTickAt: row.next_tick_at,
+    reinforcingSide: row.reinforcing_side,
+    reinforceDeadline: row.reinforce_deadline,
+    rounds: row.rounds,
     attackMessageId: row.attack_message_id,
     createdAt: row.created_at,
     resolvedAt: row.resolved_at,
@@ -109,7 +153,7 @@ export function getPendingInvasionFor(
       `SELECT * FROM invasions
         WHERE guild_id = ?
           AND (attacker_code = ? OR defender_code = ?)
-          AND status IN ('attack_vote', 'defense_window')
+          AND status IN ('attack_vote', 'defense_window', 'war', 'reinforcing')
         ORDER BY id
         LIMIT 1`,
     )
@@ -126,7 +170,8 @@ export function listPendingInvasions(
     db
       .prepare(
         `SELECT * FROM invasions
-          WHERE guild_id = ? AND status IN ('attack_vote', 'defense_window')
+          WHERE guild_id = ?
+            AND status IN ('attack_vote', 'defense_window', 'war', 'reinforcing')
           ORDER BY id`,
       )
       .all(guildId) as InvasionRow[]
@@ -151,13 +196,42 @@ export function listExpiredAttackVotes(db: Database, now: number): Invasion[] {
   ).map(toInvasion);
 }
 
-/** Invasions whose defence window has closed and which must now resolve. */
-export function listInvasionsToResolve(db: Database, now: number): Invasion[] {
+/** Invasions whose defence window closed without an answer. */
+export function listUnansweredInvasions(db: Database, now: number): Invasion[] {
   return (
     db
       .prepare(
         `SELECT * FROM invasions
           WHERE status = 'defense_window' AND defense_deadline <= ?
+          ORDER BY id`,
+      )
+      .all(now) as InvasionRow[]
+  ).map(toInvasion);
+}
+
+/** Wars with a round of fighting due. */
+export function listWarsDueATick(db: Database, now: number): Invasion[] {
+  return (
+    db
+      .prepare(
+        `SELECT * FROM invasions
+          WHERE status = 'war' AND next_tick_at <= ?
+          ORDER BY id`,
+      )
+      .all(now) as InvasionRow[]
+  ).map(toInvasion);
+}
+
+/** Wars where a side has run out of time to reinforce. */
+export function listExpiredReinforcements(
+  db: Database,
+  now: number,
+): Invasion[] {
+  return (
+    db
+      .prepare(
+        `SELECT * FROM invasions
+          WHERE status = 'reinforcing' AND reinforce_deadline <= ?
           ORDER BY id`,
       )
       .all(now) as InvasionRow[]
@@ -208,43 +282,164 @@ export function setAttackMessage(
   );
 }
 
-/** Moves an approved invasion into its defence window. */
+/**
+ * Marches: the attacker's stake takes the field and the defender is given its
+ * chance to answer.
+ */
 export function openDefenseWindow(
   db: Database,
   id: number,
+  attack: Stake,
   defenseDeadline: number,
 ): void {
   db.prepare(
-    `UPDATE invasions SET status = 'defense_window', defense_deadline = ?
+    `UPDATE invasions
+        SET status = 'defense_window', defense_deadline = ?,
+            attack_field_troops = ?, attack_field_gold = ?, attack_field_food = ?
       WHERE id = ? AND status = 'attack_vote'`,
-  ).run(defenseDeadline, id);
+  ).run(defenseDeadline, attack.troops, attack.gold, attack.food, id);
 }
 
-/** Records the defence stake that was approved and escrowed. */
-export function setDefenseStake(db: Database, id: number, stake: Stake): void {
+/** The defence turns up, and the fighting starts. */
+export function beginWar(
+  db: Database,
+  id: number,
+  defense: Stake,
+  firstTickAt: number,
+): void {
   db.prepare(
     `UPDATE invasions
-        SET defense_troops = ?, defense_gold = ?, defense_food = ?
+        SET status = 'war',
+            defense_troops = ?, defense_gold = ?, defense_food = ?,
+            defense_field_troops = ?, defense_field_gold = ?, defense_field_food = ?,
+            next_tick_at = ?
+      WHERE id = ? AND status = 'defense_window'`,
+  ).run(
+    defense.troops,
+    defense.gold,
+    defense.food,
+    defense.troops,
+    defense.gold,
+    defense.food,
+    firstTickAt,
+    id,
+  );
+}
+
+/** Writes back what survived a round, and schedules the next. */
+export function recordRound(
+  db: Database,
+  id: number,
+  fields: {attack: Stake; defense: Stake},
+  nextTickAt: number,
+): void {
+  db.prepare(
+    `UPDATE invasions
+        SET attack_field_troops = ?, attack_field_gold = ?, attack_field_food = ?,
+            defense_field_troops = ?, defense_field_gold = ?, defense_field_food = ?,
+            rounds = rounds + 1,
+            next_tick_at = ?
       WHERE id = ?`,
-  ).run(stake.troops, stake.gold, stake.food, id);
+  ).run(
+    fields.attack.troops,
+    fields.attack.gold,
+    fields.attack.food,
+    fields.defense.troops,
+    fields.defense.gold,
+    fields.defense.food,
+    nextTickAt,
+    id,
+  );
+}
+
+/** Pauses the war while one side decides to reinforce or give up. */
+export function openReinforcement(
+  db: Database,
+  id: number,
+  side: Side,
+  deadline: number,
+): void {
+  db.prepare(
+    `UPDATE invasions
+        SET status = 'reinforcing', reinforcing_side = ?,
+            reinforce_deadline = ?, next_tick_at = NULL
+      WHERE id = ?`,
+  ).run(side, deadline, id);
+}
+
+/** Fresh forces arrive, and the fighting resumes. */
+export function applyReinforcement(
+  db: Database,
+  id: number,
+  side: Side,
+  stake: Stake,
+  nextTickAt: number,
+): void {
+  const columns =
+    side === 'attacker'
+      ? {
+          total: ['attack_troops', 'attack_gold', 'attack_food'],
+          field: [
+            'attack_field_troops',
+            'attack_field_gold',
+            'attack_field_food',
+          ],
+        }
+      : {
+          total: ['defense_troops', 'defense_gold', 'defense_food'],
+          field: [
+            'defense_field_troops',
+            'defense_field_gold',
+            'defense_field_food',
+          ],
+        };
+  db.prepare(
+    `UPDATE invasions
+        SET ${columns.total[0]} = COALESCE(${columns.total[0]}, 0) + ?,
+            ${columns.total[1]} = COALESCE(${columns.total[1]}, 0) + ?,
+            ${columns.total[2]} = COALESCE(${columns.total[2]}, 0) + ?,
+            ${columns.field[0]} = ${columns.field[0]} + ?,
+            ${columns.field[1]} = ${columns.field[1]} + ?,
+            ${columns.field[2]} = ${columns.field[2]} + ?,
+            status = 'war', reinforcing_side = NULL,
+            reinforce_deadline = NULL, next_tick_at = ?
+      WHERE id = ?`,
+  ).run(
+    stake.troops,
+    stake.gold,
+    stake.food,
+    stake.troops,
+    stake.gold,
+    stake.food,
+    nextTickAt,
+    id,
+  );
 }
 
 /** Closes an invasion with its outcome. */
 export function finishInvasion(
   db: Database,
   id: number,
-  status: Exclude<InvasionStatus, 'attack_vote' | 'defense_window'>,
+  status: Extract<
+    InvasionStatus,
+    'resolved_attacker_win' | 'resolved_defender_win' | 'cancelled'
+  >,
   now: number,
 ): void {
   db.prepare(
-    'UPDATE invasions SET status = ?, resolved_at = ? WHERE id = ?',
+    `UPDATE invasions
+        SET status = ?, resolved_at = ?, next_tick_at = NULL,
+            reinforcing_side = NULL, reinforce_deadline = NULL
+      WHERE id = ?`,
   ).run(status, now, id);
 }
 
-/** A defence a player has put to their country. */
-export interface DefenseProposal {
+/** A stake somebody has put to their country: the defence, or reinforcements. */
+export interface StakeProposal {
   id: number;
   invasionId: number;
+  side: Side;
+  kind: 'defense' | 'reinforcement';
   proposerId: string;
   stake: Stake;
   status: 'pending' | 'approved' | 'rejected' | 'expired';
@@ -254,24 +449,28 @@ export interface DefenseProposal {
   resolvedAt: number | null;
 }
 
-interface DefenseProposalRow {
+interface StakeProposalRow {
   id: number;
   invasion_id: number;
+  side: Side;
+  kind: 'defense' | 'reinforcement';
   proposer_id: string;
   troops: number;
   gold: number;
   food: number;
-  status: DefenseProposal['status'];
+  status: StakeProposal['status'];
   vote_deadline: number;
   message_id: string | null;
   created_at: number;
   resolved_at: number | null;
 }
 
-function toProposal(row: DefenseProposalRow): DefenseProposal {
+function toProposal(row: StakeProposalRow): StakeProposal {
   return {
     id: row.id,
     invasionId: row.invasion_id,
+    side: row.side,
+    kind: row.kind,
     proposerId: row.proposer_id,
     stake: {troops: row.troops, gold: row.gold, food: row.food},
     status: row.status,
@@ -286,25 +485,25 @@ function toProposal(row: DefenseProposalRow): DefenseProposal {
 export function getProposal(
   db: Database,
   id: number,
-): DefenseProposal | undefined {
+): StakeProposal | undefined {
   const row = db
-    .prepare('SELECT * FROM defense_proposals WHERE id = ?')
-    .get(id) as DefenseProposalRow | undefined;
+    .prepare('SELECT * FROM stake_proposals WHERE id = ?')
+    .get(id) as StakeProposalRow | undefined;
   return row && toProposal(row);
 }
 
-/** The defence currently being voted on, if any. */
+/** The stake currently being voted on, if any. */
 export function getPendingProposal(
   db: Database,
   invasionId: number,
-): DefenseProposal | undefined {
+): StakeProposal | undefined {
   const row = db
     .prepare(
-      `SELECT * FROM defense_proposals
+      `SELECT * FROM stake_proposals
         WHERE invasion_id = ? AND status = 'pending'
         ORDER BY id DESC LIMIT 1`,
     )
-    .get(invasionId) as DefenseProposalRow | undefined;
+    .get(invasionId) as StakeProposalRow | undefined;
   return row && toProposal(row);
 }
 
@@ -312,37 +511,42 @@ export function getPendingProposal(
 export function listExpiredProposals(
   db: Database,
   now: number,
-): DefenseProposal[] {
+): StakeProposal[] {
   return (
     db
       .prepare(
-        `SELECT * FROM defense_proposals
+        `SELECT * FROM stake_proposals
           WHERE status = 'pending' AND vote_deadline <= ?
           ORDER BY id`,
       )
-      .all(now) as DefenseProposalRow[]
+      .all(now) as StakeProposalRow[]
   ).map(toProposal);
 }
 
-/** Puts a defence to the country. */
+/** Puts a stake to a country. */
 export function createProposal(
   db: Database,
   input: {
     invasionId: number;
+    side: Side;
+    kind: 'defense' | 'reinforcement';
     proposerId: string;
     stake: Stake;
     voteDeadline: number;
     now: number;
   },
-): DefenseProposal {
+): StakeProposal {
   const result = db
     .prepare(
-      `INSERT INTO defense_proposals
-         (invasion_id, proposer_id, troops, gold, food, status, vote_deadline, created_at)
-       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      `INSERT INTO stake_proposals
+         (invasion_id, side, kind, proposer_id, troops, gold, food, status,
+          vote_deadline, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
     )
     .run(
       input.invasionId,
+      input.side,
+      input.kind,
       input.proposerId,
       input.stake.troops,
       input.stake.gold,
@@ -359,21 +563,21 @@ export function setProposalMessage(
   id: number,
   messageId: string,
 ): void {
-  db.prepare('UPDATE defense_proposals SET message_id = ? WHERE id = ?').run(
+  db.prepare('UPDATE stake_proposals SET message_id = ? WHERE id = ?').run(
     messageId,
     id,
   );
 }
 
-/** Closes a proposal. A rejected one may be replaced within the window. */
+/** Closes a proposal. A rejected one may be replaced while there is time. */
 export function finishProposal(
   db: Database,
   id: number,
-  status: Exclude<DefenseProposal['status'], 'pending'>,
+  status: Exclude<StakeProposal['status'], 'pending'>,
   now: number,
 ): void {
   db.prepare(
-    `UPDATE defense_proposals SET status = ?, resolved_at = ?
+    `UPDATE stake_proposals SET status = ?, resolved_at = ?
       WHERE id = ? AND status = 'pending'`,
   ).run(status, now, id);
 }

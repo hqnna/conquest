@@ -3,16 +3,18 @@ import type {ContainerBuilder} from 'discord.js';
 import type {Invasion, Stake} from '../src/db/invasions.js';
 import {
   attackVoteCard,
-  battleReportCard,
   closedVoteCard,
   declarationCard,
   parseVoteCustomId,
+  reinforceOrSurrenderCard,
+  roundReportCard,
   stakeLine,
   voteButtons,
   voteCustomId,
+  warReportCard,
 } from '../src/discord/invasion-ui.js';
-import {resolveBattle} from '../src/game/resolution.js';
-import type {ResolutionReport} from '../src/game/invasions.js';
+import {fightRound} from '../src/game/resolution.js';
+import type {ConclusionReport, RoundReport} from '../src/game/invasions.js';
 
 const NOW = 1_700_000_000_000;
 
@@ -28,9 +30,15 @@ function invasion(overrides: Partial<Invasion> = {}): Invasion {
     defenderCode: 'DE',
     attack: stake(20, 10, 10),
     defense: null,
+    attackField: stake(20, 10, 10),
+    defenseField: stake(0),
     status: 'attack_vote',
     attackVoteDeadline: NOW + 1_000,
     defenseDeadline: null,
+    nextTickAt: null,
+    reinforcingSide: null,
+    reinforceDeadline: null,
+    rounds: 0,
     attackMessageId: null,
     createdAt: NOW,
     resolvedAt: null,
@@ -175,15 +183,99 @@ describe('declarationCard', () => {
   });
 });
 
-describe('battleReportCard', () => {
-  function report(attack: Stake, defense: Stake): ResolutionReport {
-    const outcome = resolveBattle(attack, defense, {attacker: 1, defender: 1});
+describe('roundReportCard', () => {
+  function round(attack: Stake, defense: Stake, rounds = 3): RoundReport {
+    const tick = fightRound(attack, defense, () => 0.5);
     return {
-      invasion: invasion({attack, defense, status: 'defense_window'}),
-      outcome,
-      defense,
-      loot: outcome.attackerWins ? {food: 5, gold: 6, troops: 7} : null,
-      transferredPlayers: outcome.attackerWins ? ['d1', 'd2'] : [],
+      invasion: invasion({
+        attack,
+        defense,
+        attackField: tick.attackerRemaining,
+        defenseField: tick.defenderRemaining,
+        status: 'war',
+        rounds,
+        nextTickAt: NOW + 5_000,
+      }),
+      tick,
+      spentSide: tick.attackerSpent
+        ? 'attacker'
+        : tick.defenderSpent
+          ? 'defender'
+          : null,
+      exhausted: false,
+    };
+  }
+
+  it('numbers the round and names both sides', () => {
+    const text = textOf(roundReportCard(round(stake(50), stake(40))));
+    expect(text).toContain('Round 3');
+    expect(text).toContain('🇫🇷 France');
+    expect(text).toContain('🇩🇪 Germany');
+  });
+
+  it('shows what each side lost and what it still fields', () => {
+    const text = textOf(roundReportCard(round(stake(50), stake(40))));
+    expect(text).toContain('lost');
+    expect(text).toContain('still fields');
+    expect(text).toMatch(/\d+\.\d power/);
+  });
+
+  it('counts down to the next blow while the war goes on', () => {
+    const text = textOf(roundReportCard(round(stake(50), stake(40))));
+    expect(text).toMatch(/<t:\d+:R>/);
+  });
+
+  it('says a spent force fields nothing, and stops promising more rounds', () => {
+    const report = round(stake(1), stake(400));
+    const text = textOf(roundReportCard(report));
+    expect(report.spentSide).toBe('attacker');
+    expect(text).toContain('nothing');
+    expect(text).not.toContain('next blow');
+  });
+});
+
+describe('reinforceOrSurrenderCard', () => {
+  const card = reinforceOrSurrenderCard({
+    invasion: invasion({status: 'reinforcing'}),
+    side: 'defender',
+    deadline: NOW + 9_000,
+    roleId: 'role-de',
+  });
+
+  it('pings the country whose force is gone', () => {
+    expect(textOf(card)).toContain('<@&role-de>');
+    expect(textOf(card)).toContain('🇩🇪 Germany');
+  });
+
+  it('offers both ways out and says which one silence is', () => {
+    const text = textOf(card);
+    expect(text).toContain('/reinforce');
+    expect(text).toContain('/surrender');
+    expect(text).toContain('Saying nothing is surrender');
+    expect(text).toMatch(/<t:\d+:R>/);
+  });
+});
+
+describe('warReportCard', () => {
+  function conclusion(
+    winner: 'attacker' | 'defender',
+    reason: ConclusionReport['reason'],
+    rounds = 4,
+  ): ConclusionReport {
+    return {
+      invasion: invasion({
+        attack: stake(60, 20, 20),
+        defense: stake(50, 10, 10),
+        status: 'war',
+        rounds,
+      }),
+      winner,
+      reason,
+      attackerReturns: stake(5),
+      defenderReturns: winner === 'defender' ? stake(8) : stake(0),
+      captured: winner === 'attacker' ? stake(3, 2, 2) : stake(0),
+      loot: winner === 'attacker' ? {food: 5, gold: 6, troops: 7} : null,
+      transferredPlayers: winner === 'attacker' ? ['d1', 'd2'] : [],
       capturedTerritories: [],
       defeatedRoleId: null,
       defeatedChannelId: null,
@@ -192,27 +284,33 @@ describe('battleReportCard', () => {
   }
 
   it('reports a conquest with its spoils', () => {
-    const text = textOf(battleReportCard(report(stake(50), stake(1))));
+    const text = textOf(warReportCard(conclusion('attacker', 'surrender')));
     expect(text).toContain('has conquered');
+    expect(text).toContain('gave up after 4 rounds');
     expect(text).toContain('Looted');
     expect(text).toContain('**2** players now serve');
   });
 
-  it('reports a repelled invasion with the captured haul', () => {
-    const text = textOf(battleReportCard(report(stake(5, 4, 4), stake(50))));
+  it('reports a country fought dry rather than one that quit', () => {
+    const text = textOf(warReportCard(conclusion('attacker', 'exhausted')));
+    expect(text).toContain('fought dry');
+  });
+
+  it('reports a voluntary merge as the walkover it is', () => {
+    const text = textOf(warReportCard(conclusion('attacker', 'unanswered', 0)));
+    expect(text).toContain('never answered');
+    expect(text).toContain('came home');
+  });
+
+  it('reports a defence that held, and what it cost both sides', () => {
+    const text = textOf(warReportCard(conclusion('defender', 'surrender')));
     expect(text).toContain('holds against');
-    expect(text).toContain('captured the entire invading force');
-    expect(text).toContain('**5** troops');
-    expect(text).toContain('**4** gold');
+    expect(text).toContain('Committed in all');
+    expect(text).toContain('went home to both sides');
   });
 
-  it('says plainly when nobody turned up to defend', () => {
-    const text = textOf(battleReportCard(report(stake(10), stake(0))));
-    expect(text).toContain('no defence at all');
-  });
-
-  it('shows both sides of the arithmetic', () => {
-    const text = textOf(battleReportCard(report(stake(50), stake(1))));
-    expect(text).toMatch(/\d+\.\d power/);
+  it('singularises a one-round war', () => {
+    const text = textOf(warReportCard(conclusion('defender', 'surrender', 1)));
+    expect(text).toContain('1 round of fighting');
   });
 });

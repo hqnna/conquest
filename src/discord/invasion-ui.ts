@@ -13,11 +13,11 @@ import {
   ContainerBuilder,
 } from 'discord.js';
 import {countryLabel, findCountry} from '../data/countries.js';
-import type {DefenseProposal, Invasion, Stake} from '../db/invasions.js';
+import type {Invasion, Side, Stake, StakeProposal} from '../db/invasions.js';
 import type {Stockpile} from '../db/resources.js';
 import type {Tally} from '../db/votes.js';
 import type {VoteKind} from '../db/votes.js';
-import type {ResolutionReport} from '../game/invasions.js';
+import type {ConclusionReport, RoundReport} from '../game/invasions.js';
 import {tallyLine} from '../game/voting.js';
 import {ACCENT, container, relativeTime} from './ui.js';
 
@@ -109,7 +109,7 @@ export function attackVoteCard(input: {
 /** The defence vote put to the defending country. */
 export function defenseVoteCard(input: {
   invasion: Invasion;
-  proposal: DefenseProposal;
+  proposal: StakeProposal;
   tally: Tally;
   memberCount: number;
 }): ContainerBuilder {
@@ -182,35 +182,135 @@ export function underAttackCard(input: {
   );
 }
 
-/** How a battle read, for the game log. */
-export function battleReportCard(report: ResolutionReport): ContainerBuilder {
-  const {invasion, outcome, defense} = report;
+/** A reinforcement vote: the same buttons, a different question. */
+export function reinforcementVoteCard(input: {
+  invasion: Invasion;
+  proposal: StakeProposal;
+  tally: Tally;
+  memberCount: number;
+}): ContainerBuilder {
+  const {invasion, proposal} = input;
+  const own =
+    proposal.side === 'attacker'
+      ? invasion.attackerCode
+      : invasion.defenderCode;
+  const enemy =
+    proposal.side === 'attacker'
+      ? invasion.defenderCode
+      : invasion.attackerCode;
+  const card = container(
+    proposal.side === 'attacker' ? ACCENT.attacker : ACCENT.defender,
+    '## Reinforce, or give up?',
+    [
+      `${label(own)} has nothing left in the field against ${label(enemy)}.`,
+      `<@${proposal.proposerId}> proposes sending **${stakeLine(proposal.stake)}**.`,
+      'Rejecting it, or letting the vote run out, ends the war.',
+    ].join('\n'),
+    `Voting closes ${relativeTime(proposal.voteDeadline)}.\n${tallyLine(input.tally, input.memberCount)}`,
+  );
+  card.addActionRowComponents(
+    voteButtons(
+      invasion.id,
+      proposal.side === 'attacker' ? 'attack' : 'defense',
+    ),
+  );
+  return card;
+}
+
+/** How one round of the war went, posted to both countries. */
+export function roundReportCard(report: RoundReport): ContainerBuilder {
+  const {invasion, tick} = report;
   const attacker = label(invasion.attackerCode);
   const defender = label(invasion.defenderCode);
 
-  const powers =
-    `**${attacker}:** ${outcome.attackPower.toFixed(1)} power from ${stakeLine(invasion.attack)}\n` +
-    `**${defender}:** ${outcome.defensePower.toFixed(1)} power from ${
-      defense.troops > 0 ? stakeLine(defense) : 'no defence at all'
-    }`;
+  return container(
+    ACCENT.warning,
+    `## Round ${invasion.rounds}: ${attacker} against ${defender}`,
+    [
+      `**${attacker}** — ${tick.attackPower.toFixed(1)} power, lost ${stakeLine(tick.attackerLost)}`,
+      `**${defender}** — ${tick.defensePower.toFixed(1)} power, lost ${stakeLine(tick.defenderLost)}`,
+    ].join('\n'),
+    [
+      `**${attacker} still fields:** ${fieldLine(tick.attackerRemaining)}`,
+      `**${defender} still fields:** ${fieldLine(tick.defenderRemaining)}`,
+    ].join('\n'),
+    report.spentSide
+      ? ''
+      : `The next blow lands ${relativeTime(invasion.nextTickAt ?? 0)}.`,
+  );
+}
 
-  if (!outcome.attackerWins) {
-    const haul = stakeLine(outcome.captured);
+/** A force that may be entirely gone. */
+function fieldLine(stake: Stake): string {
+  return stake.troops <= 0 && stake.gold <= 0 && stake.food <= 0
+    ? 'nothing'
+    : stakeLine(stake);
+}
+
+/** The call put to a country whose force is spent. */
+export function reinforceOrSurrenderCard(input: {
+  invasion: Invasion;
+  side: Side;
+  deadline: number;
+  roleId: string | null;
+}): ContainerBuilder {
+  const own =
+    input.side === 'attacker'
+      ? input.invasion.attackerCode
+      : input.invasion.defenderCode;
+  const enemy =
+    input.side === 'attacker'
+      ? input.invasion.defenderCode
+      : input.invasion.attackerCode;
+  return container(
+    ACCENT.danger,
+    `## ${label(own)} has nothing left in the field`,
+    [
+      input.roleId ? `<@&${input.roleId}>` : '',
+      `The war against ${label(enemy)} is lost unless fresh forces are sent.`,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    `Run \`/reinforce troops:<n> [gold] [food]\` and carry the vote before ${relativeTime(input.deadline)}, or \`/surrender\` to end it now. Saying nothing is surrender.`,
+  );
+}
+
+/** How a war ended, for the game log. */
+export function warReportCard(report: ConclusionReport): ContainerBuilder {
+  const {invasion} = report;
+  const attacker = label(invasion.attackerCode);
+  const defender = label(invasion.defenderCode);
+  const rounds =
+    invasion.rounds > 0
+      ? `after ${invasion.rounds} round${invasion.rounds === 1 ? '' : 's'} of fighting`
+      : 'without a shot fired';
+
+  if (report.winner === 'defender') {
     return container(
       ACCENT.defender,
       `## 🛡️ ${defender} holds against ${attacker}`,
-      powers,
       [
-        `${defender} captured the entire invading force: ${haul}.`,
-        `It lost **${outcome.defenderCasualties}** troops doing it; the rest went home.`,
+        report.reason === 'exhausted'
+          ? `${attacker} fought itself dry ${rounds} and had nothing left to send.`
+          : `${attacker} gave up ${rounds}.`,
+        `**Committed in all:** ${attacker} ${stakeLine(invasion.attack)} · ${defender} ${stakeLine(invasion.defense ?? {troops: 0, gold: 0, food: 0})}`,
       ].join('\n'),
-      `${attacker} cannot declare another invasion for a while, and ${defender} cannot be invaded again for a while either.`,
+      `What survived went home to both sides. ${defender} cannot be invaded again for a while, and ${attacker} cannot declare another war for a while.`,
     );
   }
 
-  const spoils: string[] = [
-    `**${outcome.attackerCasualties}** attacking troops fell; the survivors marched home.`,
-  ];
+  const spoils: string[] = [];
+  if (report.reason === 'unanswered') {
+    spoils.push(
+      `${defender} never answered the invasion and was absorbed without a fight. Every soldier ${attacker} committed came home.`,
+    );
+  } else if (report.reason === 'exhausted') {
+    spoils.push(
+      `${defender} was fought dry ${rounds} and could raise nothing more.`,
+    );
+  } else {
+    spoils.push(`${defender} gave up ${rounds}.`);
+  }
   if (report.loot) {
     spoils.push(
       `**Looted:** ${stakeLine({troops: report.loot.troops, gold: report.loot.gold, food: report.loot.food})}`,
@@ -230,7 +330,6 @@ export function battleReportCard(report: ResolutionReport): ContainerBuilder {
   return container(
     ACCENT.attacker,
     `## 🏳️ ${attacker} has conquered ${defender}`,
-    powers,
     spoils.join('\n'),
   );
 }

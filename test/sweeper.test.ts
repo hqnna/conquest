@@ -1,7 +1,7 @@
 import {beforeEach, describe, expect, it} from 'vitest';
 import type {Database} from 'better-sqlite3';
 import type {Client} from 'discord.js';
-import {INVASIONS} from '../src/config/constants.js';
+import {INVASIONS, WAR} from '../src/config/constants.js';
 import {activateCountry, getCountry} from '../src/db/countries.js';
 import {upsertGuildConfig} from '../src/db/guild-config.js';
 import {openTestDatabase} from '../src/db/index.js';
@@ -9,7 +9,9 @@ import {
   getInvasion,
   listExpiredAttackVotes,
   listExpiredProposals,
-  listInvasionsToResolve,
+  listExpiredReinforcements,
+  listUnansweredInvasions,
+  listWarsDueATick,
 } from '../src/db/invasions.js';
 import type {Stake} from '../src/db/invasions.js';
 import {joinCountry} from '../src/db/players.js';
@@ -18,6 +20,7 @@ import {
   declareInvasion,
   escrowAndOpenDefense,
   escrowDefense,
+  fightWarRound,
   proposeDefense,
 } from '../src/game/invasions.js';
 import {sweep} from '../src/game/sweeper.js';
@@ -81,6 +84,21 @@ function inFlight(db: Database, attack = stake(20)) {
   return getInvasion(db, invasion.id)!;
 }
 
+/** An invasion that was answered, so the fighting is under way. */
+function atWar(db: Database, attack = stake(20), defense = stake(15)) {
+  const invasion = inFlight(db, attack);
+  const proposed = proposeDefense(db, {
+    guildId: G,
+    code: 'DE',
+    proposerId: 'd1',
+    stake: defense,
+    now: NOW,
+  });
+  if (!proposed.ok) throw new Error('defence refused');
+  escrowDefense(db, invasion, proposed.proposal, NOW);
+  return getInvasion(db, invasion.id)!;
+}
+
 describe('what the sweeper finds', () => {
   let db: Database;
 
@@ -98,14 +116,37 @@ describe('what the sweeper finds', () => {
     ).toEqual([invasion.id]);
   });
 
-  it('finds battles due, and only those', () => {
+  it('finds invasions nobody answered, and only once they are due', () => {
     const invasion = inFlight(db);
-    expect(listInvasionsToResolve(db, invasion.defenseDeadline! - 1)).toEqual(
+    expect(listUnansweredInvasions(db, invasion.defenseDeadline! - 1)).toEqual(
       [],
     );
     expect(
-      listInvasionsToResolve(db, invasion.defenseDeadline!).map(i => i.id),
+      listUnansweredInvasions(db, invasion.defenseDeadline!).map(i => i.id),
     ).toEqual([invasion.id]);
+  });
+
+  it('finds wars with a round due, and only those', () => {
+    const war = atWar(db);
+    expect(listUnansweredInvasions(db, NOW + 1_000_000)).toEqual([]);
+    expect(listWarsDueATick(db, war.nextTickAt! - 1)).toEqual([]);
+    expect(listWarsDueATick(db, war.nextTickAt!).map(i => i.id)).toEqual([
+      war.id,
+    ]);
+  });
+
+  it('finds a side that has run out of time to reinforce', () => {
+    const war = atWar(db, stake(1), stake(90));
+    const report = fightWarRound(db, war, NOW + WAR.tickInterval, () => 0.5);
+    expect(report.invasion.status).toBe('reinforcing');
+
+    const deadline = report.invasion.reinforceDeadline!;
+    expect(listExpiredReinforcements(db, deadline - 1)).toEqual([]);
+    expect(listExpiredReinforcements(db, deadline).map(i => i.id)).toEqual([
+      war.id,
+    ]);
+    // A paused war is not also due a round of fighting.
+    expect(listWarsDueATick(db, deadline)).toEqual([]);
   });
 
   it('never finds a vote that is already settled', () => {
@@ -191,30 +232,34 @@ describe('sweep', () => {
   });
 
   it('does nothing when nothing has expired', async () => {
-    inFlight(db);
+    atWar(db);
     expect(await sweep(db, absentClient, NOW)).toEqual({
       votesExpired: 0,
       proposalsExpired: 0,
-      battlesFought: 0,
+      warsUnanswered: 0,
+      roundsFought: 0,
+      warsEnded: 0,
     });
   });
 
   it('skips guilds Conquest can no longer reach, without dying', async () => {
-    const invasion = inFlight(db);
-    const result = await sweep(db, absentClient, invasion.defenseDeadline!);
-    expect(result.battlesFought).toBe(0);
-    // The battle is still pending, so it resolves once the guild is reachable.
-    expect(getInvasion(db, invasion.id)?.status).toBe('defense_window');
+    const war = atWar(db);
+    const result = await sweep(db, absentClient, war.nextTickAt!);
+    expect(result.roundsFought).toBe(0);
+    // The round is still due, so it lands once the guild is reachable again.
+    expect(getInvasion(db, war.id)?.status).toBe('war');
+    expect(getInvasion(db, war.id)?.rounds).toBe(0);
   });
 
-  it('leaves escrowed stakes untouched while it cannot resolve them', async () => {
-    const invasion = inFlight(db, stake(20, 10, 10));
-    await sweep(db, absentClient, invasion.defenseDeadline!);
+  it('leaves committed forces untouched while it cannot fight them', async () => {
+    const war = atWar(db, stake(20, 10, 10));
+    await sweep(db, absentClient, war.nextTickAt!);
     expect(getStockpile(db, G, 'FR')).toEqual({
       troops: 80,
       gold: 90,
       food: 90,
     });
+    expect(getInvasion(db, war.id)?.attackField).toEqual(stake(20, 10, 10));
   });
 });
 
@@ -226,7 +271,7 @@ describe('pipeline invariants', () => {
   });
 
   it('keeps a country in one war at a time from declaration to resolution', () => {
-    const invasion = inFlight(db);
+    const invasion = atWar(db);
     expect(
       declareInvasion(db, {
         guildId: G,
@@ -236,7 +281,7 @@ describe('pipeline invariants', () => {
         now: NOW + 1,
       }).ok,
     ).toBe(false);
-    expect(getInvasion(db, invasion.id)?.status).toBe('defense_window');
+    expect(getInvasion(db, invasion.id)?.status).toBe('war');
   });
 
   it('escrows exactly once, however the vote is read', () => {

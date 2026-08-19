@@ -13,13 +13,30 @@ import {
   getInvasion,
   listExpiredAttackVotes,
   listExpiredProposals,
-  listInvasionsToResolve,
+  listExpiredReinforcements,
+  listUnansweredInvasions,
+  listWarsDueATick,
 } from '../db/invasions.js';
 import {
+  endWar,
   expireDefenseProposal,
   failAttack,
-  resolveAndAnnounce,
+  fightRoundAndReport,
 } from './invasion-flow.js';
+
+/** What one sweep settled. */
+export interface SweepResult {
+  /** Attack votes that ran out of time. */
+  votesExpired: number;
+  /** Defence and reinforcement votes that ran out of time. */
+  proposalsExpired: number;
+  /** Invasions nobody answered, which became voluntary merges. */
+  warsUnanswered: number;
+  /** Rounds of fighting resolved. */
+  roundsFought: number;
+  /** Wars ended by a side failing to reinforce in time. */
+  warsEnded: number;
+}
 
 /** Resolves a guild, or undefined if Conquest is no longer in it. */
 async function guildOf(
@@ -41,14 +58,12 @@ export async function sweep(
   db: Database,
   client: Client,
   now: number = Date.now(),
-): Promise<{
-  votesExpired: number;
-  proposalsExpired: number;
-  battlesFought: number;
-}> {
+): Promise<SweepResult> {
   let votesExpired = 0;
   let proposalsExpired = 0;
-  let battlesFought = 0;
+  let warsUnanswered = 0;
+  let roundsFought = 0;
+  let warsEnded = 0;
 
   for (const invasion of listExpiredAttackVotes(db, now)) {
     const guild = await guildOf(client, invasion.guildId);
@@ -80,18 +95,56 @@ export async function sweep(
     }
   }
 
-  for (const invasion of listInvasionsToResolve(db, now)) {
+  // A defender that never answered is absorbed without a fight.
+  for (const invasion of listUnansweredInvasions(db, now)) {
     const guild = await guildOf(client, invasion.guildId);
     if (!guild) continue;
     try {
-      await resolveAndAnnounce(db, guild, invasion, now);
-      battlesFought++;
+      await endWar(db, guild, invasion, 'attacker', 'unanswered', now);
+      warsUnanswered++;
     } catch (error) {
-      console.error(`Could not resolve invasion ${invasion.id}:`, error);
+      console.error(`Could not settle invasion ${invasion.id}:`, error);
     }
   }
 
-  return {votesExpired, proposalsExpired, battlesFought};
+  for (const invasion of listWarsDueATick(db, now)) {
+    const guild = await guildOf(client, invasion.guildId);
+    if (!guild) continue;
+    try {
+      await fightRoundAndReport(db, guild, invasion, now);
+      roundsFought++;
+    } catch (error) {
+      console.error(`Could not fight a round of war ${invasion.id}:`, error);
+    }
+  }
+
+  // Silence is surrender: a country that never approved reinforcements has
+  // given up, and the other side has won.
+  for (const invasion of listExpiredReinforcements(db, now)) {
+    const guild = await guildOf(client, invasion.guildId);
+    if (!guild) continue;
+    try {
+      await endWar(
+        db,
+        guild,
+        invasion,
+        invasion.reinforcingSide === 'attacker' ? 'defender' : 'attacker',
+        'surrender',
+        now,
+      );
+      warsEnded++;
+    } catch (error) {
+      console.error(`Could not end war ${invasion.id}:`, error);
+    }
+  }
+
+  return {
+    votesExpired,
+    proposalsExpired,
+    warsUnanswered,
+    roundsFought,
+    warsEnded,
+  };
 }
 
 /**

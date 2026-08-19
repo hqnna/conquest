@@ -26,6 +26,8 @@ flow, map rendering, and `/help` follow.
 | `/resources` | Player | Your country stockpile and your own cooldowns |
 | `/invade country:<t> troops:<n> [gold] [food]` | Player | Put an invasion to your country |
 | `/defend troops:<n> [gold] [food]` | Player | Put a defence to your country while under attack |
+| `/reinforce troops:<n> [gold] [food]` | Player | Send fresh forces to a war your country is losing |
+| `/surrender` | Player | Give up a war your country cannot continue |
 | `/map` | Anyone | Who holds what (text standings until rendering lands) |
 
 ## Development
@@ -112,17 +114,20 @@ identical.
 2. On a majority the stake is escrowed immediately, the war is declared in the
    game log with the stake in full, and the defender's channel is pinged.
    Marching voids the attacker's own new-country protection.
-3. Defenders have a window to `/defend`. One proposal is voted on at a time;
-   a rejected one can be replaced while the window lasts. An approved defence
-   is escrowed too.
-4. The battle is fought when the window closes, not when the defence passes,
-   so defenders cannot probe the timing. Supplies add up to +50% power, home
-   ground adds a fifth, luck swings it by a tenth either way, and ties go to
-   the defender.
-5. A conquest absorbs the country whole: its stockpile is looted, its players
-   are moved, its territories change hands, and its channel becomes a
-   read-only archive the conquerors can read. A failed invasion hands the
-   attacker's entire stake — troops included — to the defender.
+3. The defender has a window to `/defend`. **Ignoring an invasion loses it**:
+   if nothing is approved in time the country is absorbed as a voluntary
+   merge, and the attacker's army comes home untouched.
+4. If a defence does take the field, the two forces grind each other down over
+   hourly rounds. Losses are weighted by the enemy's power — supplies add up to
+   +50%, home ground adds a fifth — so the outmatched side bleeds faster, and
+   luck swings each blow by a tenth either way.
+5. When a side's troops are gone its country must answer: `/reinforce` and
+   carry the vote, or `/surrender`. **Silence is surrender.** A country whose
+   stockpile is fully drained has nothing to send and loses on the spot.
+6. An attacker that gives up marches its survivors home — it loses the war,
+   not its army. A defender that gives up loses everything: its surviving
+   force, its stockpile, its players, its territories, and its channel, which
+   becomes a read-only archive its conquerors can read.
 
 Every deadline is an absolute timestamp in SQLite, and a sweeper settles
 whatever has expired. Restarting mid-war loses nothing but the seconds

@@ -1,6 +1,6 @@
 import {beforeEach, describe, expect, it} from 'vitest';
 import type {Database} from 'better-sqlite3';
-import {COOLDOWNS, INVASIONS} from '../src/config/constants.js';
+import {COOLDOWNS, INVASIONS, WAR} from '../src/config/constants.js';
 import {activateCountry, getCountry} from '../src/db/countries.js';
 import {openTestDatabase} from '../src/db/index.js';
 import {
@@ -13,13 +13,16 @@ import {joinCountry, listCountryMembers} from '../src/db/players.js';
 import {addResources, getStockpile} from '../src/db/resources.js';
 import {castVote, tallyVotes} from '../src/db/votes.js';
 import {
-  cancelInvasion,
   canAfford,
+  cancelInvasion,
+  concludeWar,
   declareInvasion,
   escrowAndOpenDefense,
   escrowDefense,
+  escrowReinforcement,
+  fightWarRound,
   proposeDefense,
-  resolveInvasion,
+  proposeReinforcement,
 } from '../src/game/invasions.js';
 
 const NOW = 1_700_000_000_000;
@@ -355,7 +358,7 @@ describe('proposeDefense', () => {
     });
     if (first.ok) {
       db.prepare(
-        "UPDATE defense_proposals SET status = 'rejected' WHERE id = ?",
+        "UPDATE stake_proposals SET status = 'rejected' WHERE id = ?",
       ).run(first.proposal.id);
     }
 
@@ -409,6 +412,22 @@ describe('proposeDefense', () => {
   });
 });
 
+/** Declares, escrows, and gets the defence approved: a war under way. */
+function atWar(db: Database, attack = stake(40), defense = stake(30)) {
+  const invasion = inFlight(db, attack);
+  const proposed = proposeDefense(db, {
+    guildId: G,
+    code: 'DE',
+    proposerId: 'd1',
+    stake: defense,
+    now: NOW,
+  });
+  if (!proposed.ok) throw new Error('defence refused');
+  const escrow = escrowDefense(db, invasion, proposed.proposal, NOW);
+  if (!escrow.ok) throw new Error('defence escrow refused');
+  return getInvasion(db, invasion.id)!;
+}
+
 describe('escrowDefense', () => {
   let db: Database;
 
@@ -416,30 +435,232 @@ describe('escrowDefense', () => {
     db = world();
   });
 
-  it('escrows the defence and records it on the invasion', () => {
-    const invasion = inFlight(db);
-    const proposed = proposeDefense(db, {
-      guildId: G,
-      code: 'DE',
-      proposerId: 'u1',
-      stake: stake(30, 5, 5),
-      now: NOW,
-    });
-    if (!proposed.ok) throw new Error('unexpected');
-
-    expect(escrowDefense(db, invasion, proposed.proposal, NOW)).toEqual({
-      ok: true,
-    });
+  it('escrows the defence and puts it in the field', () => {
+    const invasion = atWar(db, stake(40), stake(30, 5, 5));
     expect(getStockpile(db, G, 'DE')).toEqual({
       troops: 70,
       gold: 95,
       food: 95,
     });
-    expect(getInvasion(db, invasion.id)?.defense).toEqual(stake(30, 5, 5));
+    expect(invasion.defense).toEqual(stake(30, 5, 5));
+    expect(invasion.defenseField).toEqual(stake(30, 5, 5));
+  });
+
+  it('starts the fighting', () => {
+    const invasion = atWar(db);
+    expect(invasion.status).toBe('war');
+    expect(invasion.nextTickAt).toBe(NOW + WAR.tickInterval);
+    expect(invasion.rounds).toBe(0);
   });
 });
 
-describe('resolveInvasion', () => {
+describe('fightWarRound', () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = world();
+  });
+
+  const evenLuck = () => 0.5;
+
+  it('wears both sides down and schedules the next round', () => {
+    const invasion = atWar(db, stake(40), stake(30));
+    const report = fightWarRound(
+      db,
+      invasion,
+      NOW + WAR.tickInterval,
+      evenLuck,
+    );
+
+    expect(report.invasion.attackField.troops).toBeLessThan(40);
+    expect(report.invasion.defenseField.troops).toBeLessThan(30);
+    expect(report.invasion.rounds).toBe(1);
+    expect(report.invasion.nextTickAt).toBe(NOW + WAR.tickInterval * 2);
+  });
+
+  it('never touches the home stockpiles', () => {
+    const invasion = atWar(db, stake(40), stake(30));
+    fightWarRound(db, invasion, NOW + WAR.tickInterval, evenLuck);
+    expect(getStockpile(db, G, 'FR')?.troops).toBe(60);
+    expect(getStockpile(db, G, 'DE')?.troops).toBe(70);
+  });
+
+  it('calls on the side whose force is spent', () => {
+    const invasion = atWar(db, stake(1), stake(90));
+    const report = fightWarRound(
+      db,
+      invasion,
+      NOW + WAR.tickInterval,
+      evenLuck,
+    );
+
+    expect(report.spentSide).toBe('attacker');
+    expect(report.invasion.status).toBe('reinforcing');
+    expect(report.invasion.reinforcingSide).toBe('attacker');
+    expect(report.invasion.reinforceDeadline).toBe(
+      NOW + WAR.tickInterval + WAR.reinforcementWindow,
+    );
+    expect(report.invasion.nextTickAt).toBeNull();
+  });
+
+  it('asks the attacker first when both are spent at once', () => {
+    const invasion = atWar(db, stake(1), stake(1));
+    const report = fightWarRound(
+      db,
+      invasion,
+      NOW + WAR.tickInterval,
+      evenLuck,
+    );
+    expect(report.tick.attackerSpent && report.tick.defenderSpent).toBe(true);
+    expect(report.spentSide).toBe('attacker');
+  });
+
+  it('reports a country that has been fought completely dry', () => {
+    const invasion = atWar(db, stake(1), stake(90));
+    db.prepare(
+      "UPDATE countries SET troops = 0, gold = 0, food = 0 WHERE code = 'FR'",
+    ).run();
+
+    const report = fightWarRound(
+      db,
+      invasion,
+      NOW + WAR.tickInterval,
+      evenLuck,
+    );
+    expect(report.spentSide).toBe('attacker');
+    expect(report.exhausted).toBe(true);
+  });
+
+  it('does not call a country exhausted while it has anything left', () => {
+    const invasion = atWar(db, stake(1), stake(90));
+    db.prepare(
+      "UPDATE countries SET troops = 0, gold = 1, food = 0 WHERE code = 'FR'",
+    ).run();
+
+    const report = fightWarRound(
+      db,
+      invasion,
+      NOW + WAR.tickInterval,
+      evenLuck,
+    );
+    expect(report.exhausted).toBe(false);
+  });
+});
+
+describe('reinforcements', () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = world();
+  });
+
+  const evenLuck = () => 0.5;
+
+  /** Fights until one side is asked to reinforce. */
+  function untilSpent(
+    db2: Database,
+    invasion = atWar(db2, stake(1), stake(90)),
+  ) {
+    return fightWarRound(db2, invasion, NOW + WAR.tickInterval, evenLuck)
+      .invasion;
+  }
+
+  it('only the side being asked may propose', () => {
+    const spent = untilSpent(db);
+    expect(
+      proposeReinforcement(db, {
+        guildId: G,
+        code: 'DE',
+        proposerId: 'd1',
+        stake: stake(5),
+        now: NOW,
+      }),
+    ).toEqual({ok: false, refusal: {kind: 'not_under_attack'}});
+
+    expect(
+      proposeReinforcement(db, {
+        guildId: G,
+        code: 'FR',
+        proposerId: 'a1',
+        stake: stake(5),
+        now: NOW,
+      }).ok,
+    ).toBe(true);
+    expect(spent.reinforcingSide).toBe('attacker');
+  });
+
+  it('cannot be proposed while the fighting is going normally', () => {
+    atWar(db, stake(40), stake(30));
+    expect(
+      proposeReinforcement(db, {
+        guildId: G,
+        code: 'FR',
+        proposerId: 'a1',
+        stake: stake(5),
+        now: NOW,
+      }),
+    ).toEqual({ok: false, refusal: {kind: 'not_under_attack'}});
+  });
+
+  it('adds to the field and to the running total, and resumes the war', () => {
+    const spent = untilSpent(db);
+    const proposed = proposeReinforcement(db, {
+      guildId: G,
+      code: 'FR',
+      proposerId: 'a1',
+      stake: stake(25, 5, 5),
+      now: NOW,
+    });
+    if (!proposed.ok) throw new Error('unexpected');
+
+    const escrow = escrowReinforcement(db, spent, proposed.proposal, NOW + 10);
+    expect(escrow.ok).toBe(true);
+
+    const after = getInvasion(db, spent.id)!;
+    expect(after.status).toBe('war');
+    expect(after.reinforcingSide).toBeNull();
+    expect(after.attackField.troops).toBe(25);
+    // The original one troop plus the twenty-five sent after it.
+    expect(after.attack.troops).toBe(26);
+    expect(after.nextTickAt).toBe(NOW + 10 + WAR.tickInterval);
+  });
+
+  it('pulls the reinforcement out of the home stockpile', () => {
+    const spent = untilSpent(db);
+    const proposed = proposeReinforcement(db, {
+      guildId: G,
+      code: 'FR',
+      proposerId: 'a1',
+      stake: stake(25, 5, 5),
+      now: NOW,
+    });
+    if (!proposed.ok) throw new Error('unexpected');
+    escrowReinforcement(db, spent, proposed.proposal, NOW + 10);
+
+    // 100 less the single troop staked, less the twenty-five sent.
+    expect(getStockpile(db, G, 'FR')).toEqual({
+      troops: 74,
+      gold: 95,
+      food: 95,
+    });
+  });
+
+  it('refuses a reinforcement the country cannot afford', () => {
+    const spent = untilSpent(db);
+    expect(spent.status).toBe('reinforcing');
+    const result = proposeReinforcement(db, {
+      guildId: G,
+      code: 'FR',
+      proposerId: 'a1',
+      stake: stake(9_000),
+      now: NOW,
+    });
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.refusal.kind).toBe('cannot_afford');
+  });
+});
+
+describe('concludeWar', () => {
   let db: Database;
 
   beforeEach(() => {
@@ -449,165 +670,149 @@ describe('resolveInvasion', () => {
     joinCountry(db, {guildId: G, userId: 'd2', code: 'DE', now: NOW});
   });
 
-  const neutralLuck = () => 0.5;
+  describe('when the attacker gives up', () => {
+    it('marches what is left of its army home', () => {
+      const invasion = atWar(db, stake(40, 10, 10), stake(30));
+      concludeWar(db, invasion, 'defender', 'surrender', NOW + 1);
 
-  it('conquers an undefended country', () => {
-    const invasion = inFlight(db, stake(20, 10, 10));
-    const report = resolveInvasion(db, invasion, NOW + 1, neutralLuck);
+      // Nothing was fought yet, so the whole field force comes back.
+      expect(getStockpile(db, G, 'FR')).toEqual({
+        troops: 100,
+        gold: 100,
+        food: 100,
+      });
+    });
 
-    expect(report.outcome.attackerWins).toBe(true);
-    expect(getInvasion(db, invasion.id)?.status).toBe('resolved_attacker_win');
+    it('gives the defender its own survivors back, and nothing more', () => {
+      const invasion = atWar(db, stake(40, 10, 10), stake(30, 5, 5));
+      concludeWar(db, invasion, 'defender', 'surrender', NOW + 1);
+
+      expect(getStockpile(db, G, 'DE')).toEqual({
+        troops: 100,
+        gold: 100,
+        food: 100,
+      });
+    });
+
+    it('leaves the defending country standing, with its people', () => {
+      const invasion = atWar(db);
+      concludeWar(db, invasion, 'defender', 'surrender', NOW + 1);
+
+      expect(getCountry(db, G, 'DE')?.status).toBe('active');
+      expect(listCountryMembers(db, G, 'DE').sort()).toEqual(['d1', 'd2']);
+    });
+
+    it('grants immunity to the defender and a cooldown to the attacker', () => {
+      const invasion = atWar(db);
+      concludeWar(db, invasion, 'defender', 'surrender', NOW + 1);
+
+      expect(getCountry(db, G, 'DE')?.defenseImmunityUntil).toBe(
+        NOW + 1 + INVASIONS.successfulDefenseImmunity,
+      );
+      expect(getCountry(db, G, 'FR')?.invadeCooldownUntil).toBe(
+        NOW + 1 + COOLDOWNS.invade,
+      );
+    });
   });
 
-  it('marches the survivors home and consumes their supplies', () => {
-    const invasion = inFlight(db, stake(20, 10, 10));
-    // Empty the defender, so nothing is looted to muddy the arithmetic.
-    db.prepare(
-      "UPDATE countries SET troops = 0, gold = 0, food = 0 WHERE code = 'DE'",
-    ).run();
-    resolveInvasion(db, invasion, NOW + 1, neutralLuck);
+  describe('when the defender gives up', () => {
+    it('absorbs whatever the defender still had in the field', () => {
+      const invasion = atWar(db, stake(40), stake(30, 5, 5));
+      const report = concludeWar(
+        db,
+        invasion,
+        'attacker',
+        'surrender',
+        NOW + 1,
+      );
 
-    // 80 troops left after escrow, plus 10 survivors of the 20 that marched.
-    // The 10 gold and 10 food they carried were spent on the campaign.
+      expect(report.captured).toEqual(stake(30, 5, 5));
+      // 60 left at home, 40 marching home, 30 captured from the field, and
+      // the 70 the defender had not committed.
+      expect(getStockpile(db, G, 'FR')?.troops).toBe(60 + 40 + 30 + 70);
+    });
+
+    it('loots everything the defeated country had at home', () => {
+      const invasion = atWar(db, stake(40), stake(30));
+      const report = concludeWar(
+        db,
+        invasion,
+        'attacker',
+        'surrender',
+        NOW + 1,
+      );
+
+      expect(report.loot).toEqual({troops: 70, gold: 100, food: 100});
+      expect(getStockpile(db, G, 'DE')).toEqual({
+        troops: 0,
+        gold: 0,
+        food: 0,
+      });
+    });
+
+    it('absorbs its players and its territory', () => {
+      db.prepare(
+        "UPDATE countries SET status = 'defeated', owner_code = 'DE' WHERE code = 'BE'",
+      ).run();
+      const invasion = atWar(db);
+      const report = concludeWar(
+        db,
+        invasion,
+        'attacker',
+        'surrender',
+        NOW + 1,
+      );
+
+      expect(report.transferredPlayers.sort()).toEqual(['d1', 'd2']);
+      expect(listCountryMembers(db, G, 'FR').sort()).toEqual([
+        'a1',
+        'd1',
+        'd2',
+      ]);
+      expect(report.capturedTerritories.map(t => t.code).sort()).toEqual([
+        'BE',
+        'DE',
+      ]);
+      expect(getCountry(db, G, 'BE')?.ownerCode).toBe('FR');
+      expect(getCountry(db, G, 'DE')).toMatchObject({
+        status: 'defeated',
+        ownerCode: 'FR',
+        roleId: null,
+      });
+    });
+
+    it('hands back what the conquest has to tidy up in Discord', () => {
+      const invasion = atWar(db);
+      const report = concludeWar(
+        db,
+        invasion,
+        'attacker',
+        'surrender',
+        NOW + 1,
+      );
+      expect(report.defeatedChannelId).toBe('chan-DE');
+      expect(report.defeatedRoleId).toBe('role-DE');
+      expect(report.winnerRoleId).toBe('role-FR');
+    });
+  });
+
+  it('absorbs a country that never answered, with the army untouched', () => {
+    const invasion = inFlight(db, stake(40, 10, 10));
+    const report = concludeWar(db, invasion, 'attacker', 'unanswered', NOW + 1);
+
+    expect(report.attackerReturns).toEqual(stake(40, 10, 10));
+    // The whole stake comes home: nothing was ever fought.
     expect(getStockpile(db, G, 'FR')).toEqual({
-      troops: 90,
-      gold: 90,
-      food: 90,
+      troops: 100 + 100,
+      gold: 100 + 100,
+      food: 100 + 100,
     });
-  });
-
-  it('loots everything the defender had left', () => {
-    const invasion = inFlight(db, stake(20));
-    const report = resolveInvasion(db, invasion, NOW + 1, neutralLuck);
-
-    expect(report.loot).toEqual({troops: 100, gold: 100, food: 100});
-    expect(getStockpile(db, G, 'DE')).toEqual({
-      troops: 0,
-      gold: 0,
-      food: 0,
-    });
-    expect(getStockpile(db, G, 'FR')?.gold).toBe(200);
-  });
-
-  it('absorbs the defeated country players', () => {
-    const invasion = inFlight(db, stake(20));
-    const report = resolveInvasion(db, invasion, NOW + 1, neutralLuck);
-
-    expect(report.transferredPlayers.sort()).toEqual(['d1', 'd2']);
-    expect(listCountryMembers(db, G, 'FR').sort()).toEqual(['a1', 'd1', 'd2']);
-    expect(listCountryMembers(db, G, 'DE')).toEqual([]);
-  });
-
-  it('takes the defeated country and everything it had taken', () => {
-    db.prepare(
-      "UPDATE countries SET status = 'defeated', owner_code = 'DE' WHERE code = 'BE'",
-    ).run();
-    const invasion = inFlight(db, stake(20));
-    const report = resolveInvasion(db, invasion, NOW + 1, neutralLuck);
-
-    expect(report.capturedTerritories.map(t => t.code).sort()).toEqual([
-      'BE',
-      'DE',
-    ]);
-    expect(getCountry(db, G, 'DE')).toMatchObject({
-      status: 'defeated',
-      ownerCode: 'FR',
-      roleId: null,
-    });
-    expect(getCountry(db, G, 'BE')?.ownerCode).toBe('FR');
-  });
-
-  it('hands back the channel and roles the conquest has to tidy up', () => {
-    const invasion = inFlight(db, stake(20));
-    const report = resolveInvasion(db, invasion, NOW + 1, neutralLuck);
-    expect(report.defeatedChannelId).toBe('chan-DE');
-    expect(report.defeatedRoleId).toBe('role-DE');
-    expect(report.winnerRoleId).toBe('role-FR');
-  });
-
-  it('gives a failed invasion entire stake to the defender', () => {
-    const invasion = inFlight(db, stake(10, 10, 10));
-    const proposed = proposeDefense(db, {
-      guildId: G,
-      code: 'DE',
-      proposerId: 'd1',
-      stake: stake(50),
-      now: NOW,
-    });
-    if (!proposed.ok) throw new Error('unexpected');
-    escrowDefense(db, invasion, proposed.proposal, NOW);
-
-    const report = resolveInvasion(
-      db,
-      getInvasion(db, invasion.id)!,
-      NOW + 1,
-      neutralLuck,
-    );
-
-    expect(report.outcome.attackerWins).toBe(false);
-    // 50 troops left after escrowing 50; 35 of those come back (15 lost),
-    // and the attacker's whole stake is captured on top.
-    expect(getStockpile(db, G, 'DE')).toEqual({
-      troops: 50 + 35 + 10,
-      gold: 100 + 10,
-      food: 100 + 10,
-    });
-    expect(getStockpile(db, G, 'FR')).toEqual({
-      troops: 90,
-      gold: 90,
-      food: 90,
-    });
-  });
-
-  it('leaves a repelled attacker with nothing of its stake', () => {
-    const invasion = inFlight(db, stake(10, 10, 10));
-    const proposed = proposeDefense(db, {
-      guildId: G,
-      code: 'DE',
-      proposerId: 'd1',
-      stake: stake(50),
-      now: NOW,
-    });
-    if (!proposed.ok) throw new Error('unexpected');
-    escrowDefense(db, invasion, proposed.proposal, NOW);
-    resolveInvasion(db, getInvasion(db, invasion.id)!, NOW + 1, neutralLuck);
-
-    expect(listCountryMembers(db, G, 'DE').sort()).toEqual(['d1', 'd2']);
-    expect(getCountry(db, G, 'DE')?.status).toBe('active');
-  });
-
-  it('gives a successful defender immunity, and the attacker a cooldown', () => {
-    const invasion = inFlight(db, stake(10));
-    const proposed = proposeDefense(db, {
-      guildId: G,
-      code: 'DE',
-      proposerId: 'd1',
-      stake: stake(50),
-      now: NOW,
-    });
-    if (!proposed.ok) throw new Error('unexpected');
-    escrowDefense(db, invasion, proposed.proposal, NOW);
-    resolveInvasion(db, getInvasion(db, invasion.id)!, NOW + 1, neutralLuck);
-
-    expect(getCountry(db, G, 'DE')?.defenseImmunityUntil).toBe(
-      NOW + 1 + INVASIONS.successfulDefenseImmunity,
-    );
-    expect(getCountry(db, G, 'FR')?.invadeCooldownUntil).toBe(
-      NOW + 1 + COOLDOWNS.invade,
-    );
-  });
-
-  it('puts the attacker on cooldown even when it wins', () => {
-    const invasion = inFlight(db, stake(20));
-    resolveInvasion(db, invasion, NOW + 1, neutralLuck);
-    expect(getCountry(db, G, 'FR')?.invadeCooldownUntil).toBe(
-      NOW + 1 + COOLDOWNS.invade,
-    );
+    expect(getCountry(db, G, 'DE')?.status).toBe('defeated');
   });
 
   it('frees both countries to fight again', () => {
-    const invasion = inFlight(db, stake(20));
-    resolveInvasion(db, invasion, NOW + 1, neutralLuck);
+    const invasion = atWar(db);
+    concludeWar(db, invasion, 'attacker', 'surrender', NOW + 1);
     expect(getPendingInvasionFor(db, G, 'FR')).toBeUndefined();
     expect(getPendingInvasionFor(db, G, 'DE')).toBeUndefined();
   });
@@ -620,8 +825,8 @@ describe('cancelInvasion', () => {
     db = world();
   });
 
-  it('refunds an escrowed attack when the war is called off', () => {
-    const invasion = inFlight(db, stake(20, 10, 10));
+  it('sends both field forces home when the war is called off', () => {
+    const invasion = atWar(db, stake(20, 10, 10), stake(30, 5, 5));
     cancelInvasion(db, invasion, NOW + 5);
 
     expect(getStockpile(db, G, 'FR')).toEqual({
@@ -629,33 +834,18 @@ describe('cancelInvasion', () => {
       gold: 100,
       food: 100,
     });
-    expect(getInvasion(db, invasion.id)?.status).toBe('cancelled');
-  });
-
-  it('refunds an escrowed defence too', () => {
-    const invasion = inFlight(db, stake(20));
-    const proposed = proposeDefense(db, {
-      guildId: G,
-      code: 'DE',
-      proposerId: 'd1',
-      stake: stake(30, 5, 5),
-      now: NOW,
-    });
-    if (!proposed.ok) throw new Error('unexpected');
-    escrowDefense(db, invasion, proposed.proposal, NOW);
-
-    cancelInvasion(db, getInvasion(db, invasion.id)!, NOW + 5);
     expect(getStockpile(db, G, 'DE')).toEqual({
       troops: 100,
       gold: 100,
       food: 100,
     });
+    expect(getInvasion(db, invasion.id)?.status).toBe('cancelled');
   });
 
   it('refunds nothing for a vote that never escrowed', () => {
-    const declared = declare(db, stake(20));
-    if (!declared.ok) throw new Error('unexpected');
-    cancelInvasion(db, declared.invasion, NOW + 5);
+    const result = declare(db, stake(20));
+    if (!result.ok) throw new Error('unexpected');
+    cancelInvasion(db, result.invasion, NOW + 5);
     expect(getStockpile(db, G, 'FR')).toEqual({
       troops: 100,
       gold: 100,

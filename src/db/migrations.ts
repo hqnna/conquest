@@ -1,6 +1,7 @@
 import type {Database} from 'better-sqlite3';
 import {migration as initialSchema} from './migrations/001-initial-schema.js';
 import {migration as invasionMessaging} from './migrations/002-invasion-messaging.js';
+import {migration as warsOfAttrition} from './migrations/003-wars-of-attrition.js';
 
 /** One forward-only schema change. */
 export interface Migration {
@@ -16,6 +17,7 @@ export interface Migration {
 export const MIGRATIONS: readonly Migration[] = [
   initialSchema,
   invasionMessaging,
+  warsOfAttrition,
 ];
 
 const MIGRATIONS_TABLE = `
@@ -39,6 +41,10 @@ export function migrate(
 ): number[] {
   db.exec(MIGRATIONS_TABLE);
 
+  // A migration may rebuild a table other tables reference. SQLite ignores
+  // this pragma inside a transaction, so it is set around the whole run.
+  db.pragma('foreign_keys = OFF');
+
   const applied = new Set(
     db
       .prepare('SELECT version FROM schema_migrations')
@@ -61,5 +67,7 @@ export function migrate(
     })();
     ran.push(migration.version);
   }
+
+  db.pragma('foreign_keys = ON');
   return ran;
 }

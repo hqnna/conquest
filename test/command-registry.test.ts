@@ -16,8 +16,10 @@ describe('command registry', () => {
       'map',
       'mine',
       'recruit',
+      'reinforce',
       'resources',
       'setup',
+      'surrender',
     ]);
   });
 

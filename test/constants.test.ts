@@ -5,6 +5,7 @@ import {
   GAME,
   INVASIONS,
   RESOURCES,
+  WAR,
   formatDuration,
 } from '../src/config/constants.js';
 
@@ -36,15 +37,24 @@ describe('constants', () => {
     }
   });
 
-  it('keeps casualty rates and the supply cap as fractions', () => {
+  it('keeps loss rates and the supply cap as fractions', () => {
     for (const rate of [
-      INVASIONS.attackerCasualtyRate,
-      INVASIONS.defenderCasualtyRate,
+      WAR.baseLossRate,
+      WAR.lossRateRange.min,
+      WAR.lossRateRange.max,
       INVASIONS.maxSupplyBonus,
     ]) {
       expect(rate).toBeGreaterThan(0);
       expect(rate).toBeLessThanOrEqual(1);
     }
+  });
+
+  it('keeps every war tick survivable and every war finite', () => {
+    expect(WAR.lossRateRange.min).toBeLessThan(WAR.lossRateRange.max);
+    expect(WAR.baseLossRate).toBeGreaterThanOrEqual(WAR.lossRateRange.min);
+    expect(WAR.baseLossRate).toBeLessThanOrEqual(WAR.lossRateRange.max);
+    expect(WAR.tickInterval).toBeGreaterThan(0);
+    expect(WAR.reinforcementWindow).toBeGreaterThan(0);
   });
 });
 

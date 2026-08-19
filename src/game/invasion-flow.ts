@@ -14,23 +14,27 @@ import type {Database} from '../db/index.js';
 import {
   finishInvasion,
   finishProposal,
+  getInvasion,
   getPendingProposal,
   setAttackMessage,
   setProposalMessage,
 } from '../db/invasions.js';
-import type {DefenseProposal, Invasion} from '../db/invasions.js';
+import type {Invasion, Side, StakeProposal} from '../db/invasions.js';
 import {countCountryMembers} from '../db/players.js';
 import {tallyVotes} from '../db/votes.js';
 import {announce} from '../discord/log.js';
 import {
   attackVoteCard,
-  battleReportCard,
   closedVoteCard,
   declarationCard,
   defenseVoteCard,
   escrowFailedCard,
+  reinforceOrSurrenderCard,
+  reinforcementVoteCard,
+  roundReportCard,
   stakeLine,
   underAttackCard,
+  warReportCard,
 } from '../discord/invasion-ui.js';
 import {ACCENT, container, v2Message} from '../discord/ui.js';
 import {
@@ -40,11 +44,14 @@ import {
   revokeCountryRole,
 } from './country-lifecycle.js';
 import {
+  concludeWar,
   escrowAndOpenDefense,
   escrowDefense,
+  escrowReinforcement,
+  fightWarRound,
   recordArchive,
-  resolveInvasion,
 } from './invasions.js';
+import type {ConclusionReport} from './invasions.js';
 import {readTally} from './voting.js';
 
 /** Fetches a country's channel, if it still exists and can be posted in. */
@@ -215,7 +222,7 @@ export async function openDefenseVote(
   db: Database,
   guild: Guild,
   invasion: Invasion,
-  proposal: DefenseProposal,
+  proposal: StakeProposal,
   now: number,
 ): Promise<void> {
   const channel = await channelOf(db, guild, invasion.defenderCode);
@@ -240,7 +247,13 @@ export async function openDefenseVote(
   await readDefenseVote(db, guild, invasion, now);
 }
 
-/** Counts a defence vote and acts on the answer. */
+/**
+ * Counts a defence or reinforcement vote and acts on the answer.
+ *
+ * Which vote it is follows from the invasion's state: a country under
+ * invasion is answering the invasion, and a country whose force is spent is
+ * answering for that.
+ */
 export async function readDefenseVote(
   db: Database,
   guild: Guild,
@@ -250,31 +263,21 @@ export async function readDefenseVote(
   const proposal = getPendingProposal(db, invasion.id);
   if (!proposal) return 'pending';
 
-  const memberCount = countCountryMembers(db, guild.id, invasion.defenderCode);
-  const tally = tallyVotes(db, invasion.id, 'defense');
+  const code =
+    proposal.side === 'attacker'
+      ? invasion.attackerCode
+      : invasion.defenderCode;
+  const memberCount = countCountryMembers(db, guild.id, code);
+  const tally = tallyVotes(
+    db,
+    invasion.id,
+    proposal.side === 'attacker' ? 'attack' : 'defense',
+  );
   const outcome = readTally(tally, memberCount);
-  const channel = await channelOf(db, guild, invasion.defenderCode);
+  const channel = await channelOf(db, guild, code);
+  const kind = proposal.side === 'attacker' ? 'attack' : 'defense';
 
-  if (outcome === 'approved') {
-    const escrow = escrowDefense(db, invasion, proposal, now);
-    await closeVoteMessage(
-      guild,
-      channel,
-      proposal.messageId,
-      closedVoteCard({
-        invasionId: invasion.id,
-        kind: 'defense',
-        heading: escrow.ok
-          ? 'The defence was approved'
-          : 'The defence could not be raised',
-        detail: escrow.ok
-          ? `${stakeLine(proposal.stake)} stands ready. The battle is fought when the window closes.`
-          : 'The stockpile no longer covered it, so nothing was committed. Propose a smaller defence.',
-        approved: escrow.ok,
-      }),
-    );
-    return escrow.ok ? 'approved' : 'rejected';
-  }
+  if (outcome === 'pending') return outcome;
 
   if (outcome === 'rejected') {
     finishProposal(db, proposal.id, 'rejected', now);
@@ -284,68 +287,223 @@ export async function readDefenseVote(
       proposal.messageId,
       closedVoteCard({
         invasionId: invasion.id,
-        kind: 'defense',
-        heading: 'The defence was voted down',
+        kind,
+        heading:
+          proposal.kind === 'defense'
+            ? 'The defence was voted down'
+            : 'The reinforcements were voted down',
         detail:
-          'Nothing was committed. Anyone may propose a different defence while the window lasts.',
+          proposal.kind === 'defense'
+            ? 'Nothing was committed. Anyone may propose a different defence while the window lasts.'
+            : 'Nothing was committed. Propose something smaller before the deadline, or the war is over.',
         approved: false,
       }),
     );
+    return outcome;
   }
-  return outcome;
+
+  const escrow =
+    proposal.kind === 'defense'
+      ? escrowDefense(db, invasion, proposal, now)
+      : escrowReinforcement(db, invasion, proposal, now);
+
+  await closeVoteMessage(
+    guild,
+    channel,
+    proposal.messageId,
+    closedVoteCard({
+      invasionId: invasion.id,
+      kind,
+      heading: escrow.ok
+        ? proposal.kind === 'defense'
+          ? 'The defence takes the field'
+          : 'The reinforcements are on their way'
+        : 'It could not be raised',
+      detail: escrow.ok
+        ? `${stakeLine(proposal.stake)} joins the fighting.`
+        : 'The stockpile no longer covered it, so nothing was committed. Propose less.',
+      approved: escrow.ok,
+    }),
+  );
+
+  if (escrow.ok && proposal.kind === 'defense') {
+    await announceWarBegins(db, guild, invasion);
+  }
+  return escrow.ok ? 'approved' : 'rejected';
 }
 
-/** Closes a defence proposal whose vote window ran out. */
+/** Tells both countries the fighting has started. */
+async function announceWarBegins(
+  db: Database,
+  guild: Guild,
+  invasion: Invasion,
+): Promise<void> {
+  const current = getInvasion(db, invasion.id);
+  if (!current) return;
+  await announce(
+    db,
+    guild,
+    container(
+      ACCENT.warning,
+      `## The war for ${countryName(invasion.defenderCode)} has begun`,
+      `${countryName(invasion.defenderCode)} met the invasion in the field. Neither side walks away now until one of them has nothing left to send.`,
+      `**${countryName(invasion.attackerCode)}:** ${stakeLine(current.attackField)}\n**${countryName(invasion.defenderCode)}:** ${stakeLine(current.defenseField)}`,
+    ),
+  );
+}
+
+/** A country's name for copy, falling back to its code. */
+function countryName(code: string): string {
+  const country = findCountry(code);
+  return country ? countryLabel(country) : code;
+}
+
+/** Closes a proposal whose vote window ran out. */
 export async function expireDefenseProposal(
   db: Database,
   guild: Guild,
   invasion: Invasion,
-  proposal: DefenseProposal,
+  proposal: StakeProposal,
   now: number,
 ): Promise<void> {
   finishProposal(db, proposal.id, 'expired', now);
+  const code =
+    proposal.side === 'attacker'
+      ? invasion.attackerCode
+      : invasion.defenderCode;
   await closeVoteMessage(
     guild,
-    await channelOf(db, guild, invasion.defenderCode),
+    await channelOf(db, guild, code),
     proposal.messageId,
     closedVoteCard({
       invasionId: invasion.id,
-      kind: 'defense',
-      heading: 'The defence vote ran out of time',
+      kind: proposal.side === 'attacker' ? 'attack' : 'defense',
+      heading: 'The vote ran out of time',
       detail: 'Nothing was committed.',
       approved: false,
     }),
   );
 }
 
+/** Posts a reinforcement proposal and reads it at once. */
+export async function openReinforcementVote(
+  db: Database,
+  guild: Guild,
+  invasion: Invasion,
+  proposal: StakeProposal,
+  now: number,
+): Promise<void> {
+  const code =
+    proposal.side === 'attacker'
+      ? invasion.attackerCode
+      : invasion.defenderCode;
+  const channel = await channelOf(db, guild, code);
+
+  if (channel) {
+    const message = await channel
+      .send(
+        v2Message(
+          reinforcementVoteCard({
+            invasion,
+            proposal,
+            tally: tallyVotes(
+              db,
+              invasion.id,
+              proposal.side === 'attacker' ? 'attack' : 'defense',
+            ),
+            memberCount: countCountryMembers(db, guild.id, code),
+          }),
+        ),
+      )
+      .catch(() => null);
+    if (message) setProposalMessage(db, proposal.id, message.id);
+  }
+
+  await readDefenseVote(db, guild, invasion, now);
+}
+
 /**
- * Fights the battle and carries out everything that follows: the archive, the
- * roles, the announcement.
+ * Fights one round of a war and says what it cost.
  *
- * Role changes are applied one at a time. A large conquest moves every player
- * of a country, and Discord will not be rushed.
+ * If a side is left with nothing in the field, its country is called on to
+ * reinforce or give up — unless it has nothing at home either, in which case
+ * the war is already over: a country fought dry cannot fight on.
  */
-export async function resolveAndAnnounce(
+export async function fightRoundAndReport(
   db: Database,
   guild: Guild,
   invasion: Invasion,
   now: number,
 ): Promise<void> {
+  const report = fightWarRound(db, invasion, now);
+  const card = roundReportCard(report);
+
+  for (const code of [invasion.attackerCode, invasion.defenderCode]) {
+    const channel = await channelOf(db, guild, code);
+    await channel?.send(v2Message(card)).catch(() => undefined);
+  }
+
+  if (!report.spentSide) return;
+
+  if (report.exhausted) {
+    await endWar(
+      db,
+      guild,
+      report.invasion,
+      report.spentSide === 'attacker' ? 'defender' : 'attacker',
+      'exhausted',
+      now,
+    );
+    return;
+  }
+
+  const code =
+    report.spentSide === 'attacker'
+      ? invasion.attackerCode
+      : invasion.defenderCode;
+  const channel = await channelOf(db, guild, code);
+  const country = getCountry(db, guild.id, code);
+  await channel
+    ?.send(
+      v2Message(
+        reinforceOrSurrenderCard({
+          invasion: report.invasion,
+          side: report.spentSide,
+          deadline: report.invasion.reinforceDeadline ?? now,
+          roleId: country?.roleId ?? null,
+        }),
+      ),
+    )
+    .catch(() => undefined);
+}
+
+/**
+ * Ends a war and carries out everything that follows: the archive, the roles,
+ * the announcement.
+ */
+export async function endWar(
+  db: Database,
+  guild: Guild,
+  invasion: Invasion,
+  winner: Side,
+  reason: ConclusionReport['reason'],
+  now: number,
+): Promise<void> {
   const pending = getPendingProposal(db, invasion.id);
   if (pending) finishProposal(db, pending.id, 'expired', now);
 
-  const report = resolveInvasion(db, invasion, now);
-  await announce(db, guild, battleReportCard(report));
+  const report = concludeWar(db, invasion, winner, reason, now);
+  await announce(db, guild, warReportCard(report));
 
-  if (!report.outcome.attackerWins) {
+  if (winner === 'defender') {
     const channel = await channelOf(db, guild, invasion.defenderCode);
     await channel
       ?.send(
         v2Message(
           container(
             ACCENT.success,
-            '## The invasion was thrown back',
-            `Everything ${findCountry(invasion.attackerCode) ? countryLabel(findCountry(invasion.attackerCode)!) : invasion.attackerCode} committed is yours: ${stakeLine(report.outcome.captured)}.`,
+            '## The invasion is over',
+            `${countryName(invasion.attackerCode)} could not finish what it started. Your survivors are home: ${stakeLine(report.defenderReturns)}.`,
           ),
         ),
       )
@@ -361,7 +519,7 @@ async function applyConquest(
   db: Database,
   guild: Guild,
   invasion: Invasion,
-  report: ReturnType<typeof resolveInvasion>,
+  report: ConclusionReport,
 ): Promise<void> {
   const winnerRoleId = report.winnerRoleId;
   const defeated = findCountry(invasion.defenderCode);

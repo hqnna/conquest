@@ -8,7 +8,7 @@
  * Discord work happens after the transaction commits, driven by what it
  * returns.
  */
-import {COOLDOWNS, INVASIONS} from '../config/constants.js';
+import {COOLDOWNS, INVASIONS, WAR} from '../config/constants.js';
 import {
   getCountry,
   listTerritories,
@@ -17,16 +17,20 @@ import {
 import type {CountryState} from '../db/countries.js';
 import type {Database} from '../db/index.js';
 import {
+  applyReinforcement,
+  beginWar,
   createInvasion,
   createProposal,
   finishInvasion,
   finishProposal,
+  getInvasion,
   getPendingInvasionFor,
   getPendingProposal,
   openDefenseWindow,
-  setDefenseStake,
+  openReinforcement,
+  recordRound,
 } from '../db/invasions.js';
-import type {DefenseProposal, Invasion, Stake} from '../db/invasions.js';
+import type {Invasion, Side, Stake, StakeProposal} from '../db/invasions.js';
 import {countCountryMembers, transferPlayers} from '../db/players.js';
 import {
   addResources,
@@ -36,8 +40,8 @@ import {
 } from '../db/resources.js';
 import type {Stockpile} from '../db/resources.js';
 import {clearVotes} from '../db/votes.js';
-import {NO_STAKE, resolveBattle, rollLuck} from './resolution.js';
-import type {BattleOutcome} from './resolution.js';
+import {NO_STAKE, fightRound} from './resolution.js';
+import type {WarTick} from './resolution.js';
 
 /** Why Conquest turned a declaration down. */
 export type InvadeRefusal =
@@ -192,17 +196,16 @@ export function declareInvasion(
   })();
 }
 
-/** Why an approved attack vote could not go ahead after all. */
+/** Why an approved stake could not take the field after all. */
 export type EscrowFailure = {kind: 'cannot_afford'; stockpile: Stockpile};
 
 /**
- * Escrows the attacker's stake and opens the defence window.
+ * Escrows the attacker's stake and gives the defender its chance to answer.
  *
  * The stake leaves the stockpile the moment the vote passes, so a country
- * cannot promise the same troops to two wars or spend them while the battle
- * is pending. If the stockpile has fallen below the stake since the
- * declaration, the invasion is cancelled instead of shipping an army that
- * does not exist.
+ * cannot promise the same troops to two wars or spend them while the fighting
+ * is on. If the stockpile has fallen below the stake since the declaration,
+ * the invasion is called off instead of marching an army that does not exist.
  */
 export function escrowAndOpenDefense(
   db: Database,
@@ -226,11 +229,7 @@ export function escrowAndOpenDefense(
             db,
             invasion.guildId,
             invasion.attackerCode,
-          ) ?? {
-            food: 0,
-            gold: 0,
-            troops: 0,
-          },
+          ) ?? {food: 0, gold: 0, troops: 0},
         },
       };
     }
@@ -242,27 +241,27 @@ export function escrowAndOpenDefense(
     ).run(invasion.guildId, invasion.attackerCode);
 
     const defenseDeadline = now + INVASIONS.defenseWindow;
-    openDefenseWindow(db, invasion.id, defenseDeadline);
+    openDefenseWindow(db, invasion.id, invasion.attack, defenseDeadline);
     return {ok: true as const, defenseDeadline};
   })();
 }
 
-/** Why Conquest turned a defence proposal down. */
+/** Why Conquest turned a defence or reinforcement down. */
 export type DefendRefusal =
   | {kind: 'not_in_country'}
   | {kind: 'not_under_attack'}
   | {kind: 'window_closed'}
-  | {kind: 'proposal_pending'; proposal: DefenseProposal}
+  | {kind: 'proposal_pending'; proposal: StakeProposal}
   | {kind: 'already_defended'}
   | {kind: 'no_troops'}
   | {kind: 'cannot_afford'; stockpile: Stockpile};
 
 /**
- * Puts a defence to the defending country.
+ * Puts the opening defence to the defending country.
  *
  * Only one proposal may be pending at a time; a rejected one may be replaced
- * while the window lasts. The vote window is capped by the defence deadline,
- * since a vote that ends after the battle would decide nothing.
+ * while the window lasts. The vote is capped by the defence deadline, since a
+ * vote that ends after the invader has already walked in decides nothing.
  */
 export function proposeDefense(
   db: Database,
@@ -274,7 +273,7 @@ export function proposeDefense(
     now: number;
   },
 ):
-  | {ok: true; invasion: Invasion; proposal: DefenseProposal}
+  | {ok: true; invasion: Invasion; proposal: StakeProposal}
   | {ok: false; refusal: DefendRefusal} {
   return db.transaction(() => {
     const invasion = getPendingInvasionFor(db, input.guildId, input.code);
@@ -282,13 +281,16 @@ export function proposeDefense(
       return {ok: false as const, refusal: {kind: 'not_under_attack' as const}};
     }
     if (invasion.status !== 'defense_window' || !invasion.defenseDeadline) {
-      return {ok: false as const, refusal: {kind: 'not_under_attack' as const}};
+      return {
+        ok: false as const,
+        refusal:
+          invasion.status === 'war' || invasion.status === 'reinforcing'
+            ? ({kind: 'already_defended'} as const)
+            : ({kind: 'not_under_attack'} as const),
+      };
     }
     if (invasion.defenseDeadline <= input.now) {
       return {ok: false as const, refusal: {kind: 'window_closed' as const}};
-    }
-    if (invasion.defense) {
-      return {ok: false as const, refusal: {kind: 'already_defended' as const}};
     }
 
     const pending = getPendingProposal(db, invasion.id);
@@ -317,6 +319,8 @@ export function proposeDefense(
     clearVotes(db, invasion.id, 'defense');
     const proposal = createProposal(db, {
       invasionId: invasion.id,
+      side: 'defender',
+      kind: 'defense',
       proposerId: input.proposerId,
       stake: input.stake,
       voteDeadline: Math.min(
@@ -330,17 +334,93 @@ export function proposeDefense(
 }
 
 /**
- * Escrows an approved defence.
+ * Puts reinforcements to whichever country has run out of force.
  *
- * As with the attack stake, the resources leave the stockpile immediately so
- * they cannot be spent twice before the battle.
+ * Only the side being asked may propose, and only while it is being asked:
+ * this is the answer to "reinforce or give up", not a way to pour troops into
+ * a war at any moment.
+ */
+export function proposeReinforcement(
+  db: Database,
+  input: {
+    guildId: string;
+    code: string;
+    proposerId: string;
+    stake: Stake;
+    now: number;
+  },
+):
+  | {ok: true; invasion: Invasion; proposal: StakeProposal}
+  | {ok: false; refusal: DefendRefusal} {
+  return db.transaction(() => {
+    const invasion = getPendingInvasionFor(db, input.guildId, input.code);
+    if (!invasion) {
+      return {ok: false as const, refusal: {kind: 'not_under_attack' as const}};
+    }
+    const side: Side =
+      invasion.attackerCode === input.code ? 'attacker' : 'defender';
+    if (
+      invasion.status !== 'reinforcing' ||
+      invasion.reinforcingSide !== side
+    ) {
+      return {ok: false as const, refusal: {kind: 'not_under_attack' as const}};
+    }
+    if (invasion.reinforceDeadline && invasion.reinforceDeadline <= input.now) {
+      return {ok: false as const, refusal: {kind: 'window_closed' as const}};
+    }
+
+    const pending = getPendingProposal(db, invasion.id);
+    if (pending) {
+      return {
+        ok: false as const,
+        refusal: {kind: 'proposal_pending' as const, proposal: pending},
+      };
+    }
+    if (input.stake.troops < 1) {
+      return {ok: false as const, refusal: {kind: 'no_troops' as const}};
+    }
+
+    const stockpile = getStockpile(db, input.guildId, input.code);
+    if (!stockpile) {
+      return {ok: false as const, refusal: {kind: 'not_in_country' as const}};
+    }
+    if (!canAfford(stockpile, input.stake)) {
+      return {
+        ok: false as const,
+        refusal: {kind: 'cannot_afford' as const, stockpile},
+      };
+    }
+
+    const kind = side === 'attacker' ? 'attack' : 'defense';
+    clearVotes(db, invasion.id, kind);
+    const proposal = createProposal(db, {
+      invasionId: invasion.id,
+      side,
+      kind: 'reinforcement',
+      proposerId: input.proposerId,
+      stake: input.stake,
+      voteDeadline: Math.min(
+        input.now + WAR.reinforcementWindow,
+        invasion.reinforceDeadline ?? input.now + WAR.reinforcementWindow,
+      ),
+      now: input.now,
+    });
+    return {ok: true as const, invasion, proposal};
+  })();
+}
+
+/**
+ * Escrows an approved defence and starts the fighting.
+ *
+ * As with the attack stake, the resources leave the stockpile at once so they
+ * cannot be spent twice while the war runs.
  */
 export function escrowDefense(
   db: Database,
   invasion: Invasion,
-  proposal: DefenseProposal,
+  proposal: StakeProposal,
   now: number,
-): {ok: true} | {ok: false; failure: EscrowFailure} {
+): {ok: true; firstTickAt: number} | {ok: false; failure: EscrowFailure} {
   return db.transaction(() => {
     const paid = spendResources(
       db,
@@ -358,7 +438,37 @@ export function escrowDefense(
             db,
             invasion.guildId,
             invasion.defenderCode,
-          ) ?? {
+          ) ?? {food: 0, gold: 0, troops: 0},
+        },
+      };
+    }
+    finishProposal(db, proposal.id, 'approved', now);
+    const firstTickAt = now + WAR.tickInterval;
+    beginWar(db, invasion.id, proposal.stake, firstTickAt);
+    return {ok: true as const, firstTickAt};
+  })();
+}
+
+/** Escrows approved reinforcements and resumes the fighting. */
+export function escrowReinforcement(
+  db: Database,
+  invasion: Invasion,
+  proposal: StakeProposal,
+  now: number,
+): {ok: true; nextTickAt: number} | {ok: false; failure: EscrowFailure} {
+  const code =
+    proposal.side === 'attacker'
+      ? invasion.attackerCode
+      : invasion.defenderCode;
+  return db.transaction(() => {
+    const paid = spendResources(db, invasion.guildId, code, proposal.stake);
+    if (!paid) {
+      finishProposal(db, proposal.id, 'rejected', now);
+      return {
+        ok: false as const,
+        failure: {
+          kind: 'cannot_afford' as const,
+          stockpile: getStockpile(db, invasion.guildId, code) ?? {
             food: 0,
             gold: 0,
             troops: 0,
@@ -367,20 +477,112 @@ export function escrowDefense(
       };
     }
     finishProposal(db, proposal.id, 'approved', now);
-    setDefenseStake(db, invasion.id, proposal.stake);
-    return {ok: true as const};
+    const nextTickAt = now + WAR.tickInterval;
+    applyReinforcement(
+      db,
+      invasion.id,
+      proposal.side,
+      proposal.stake,
+      nextTickAt,
+    );
+    return {ok: true as const, nextTickAt};
   })();
 }
 
-/** Everything that happened when a battle resolved. */
-export interface ResolutionReport {
+/** What one round of a war did, and what it means for the war. */
+export interface RoundReport {
   invasion: Invasion;
-  outcome: BattleOutcome;
-  /** The defence that turned up, which may be nothing at all. */
-  defense: Stake;
-  /** Stockpile looted from the defeated country, on a conquest. */
+  tick: WarTick;
+  /**
+   * The side that must now reinforce or give up, or null if the fighting
+   * simply carries on.
+   */
+  spentSide: Side | null;
+  /**
+   * True when that side has nothing left at home to reinforce with, so it has
+   * already lost — a fully drained country cannot fight on.
+   */
+  exhausted: boolean;
+}
+
+/**
+ * Fights one round and writes back what survived.
+ *
+ * Both sides' losses come from the same pre-tick state, so neither swings
+ * first. If a side's troops are gone its country is asked to reinforce; if
+ * that country's stockpile is empty too, there is nothing to ask and the war
+ * is already decided.
+ *
+ * When both sides are spent in the same round the attacker is the one asked
+ * first: it is the attacker's war, and the burden of continuing it is theirs.
+ */
+export function fightWarRound(
+  db: Database,
+  invasion: Invasion,
+  now: number,
+  random: () => number = Math.random,
+): RoundReport {
+  const tick = fightRound(invasion.attackField, invasion.defenseField, random);
+
+  return db.transaction(() => {
+    recordRound(
+      db,
+      invasion.id,
+      {attack: tick.attackerRemaining, defense: tick.defenderRemaining},
+      now + WAR.tickInterval,
+    );
+
+    const spentSide: Side | null = tick.attackerSpent
+      ? 'attacker'
+      : tick.defenderSpent
+        ? 'defender'
+        : null;
+
+    if (spentSide) {
+      openReinforcement(
+        db,
+        invasion.id,
+        spentSide,
+        now + WAR.reinforcementWindow,
+      );
+    }
+
+    const code =
+      spentSide === 'attacker'
+        ? invasion.attackerCode
+        : spentSide === 'defender'
+          ? invasion.defenderCode
+          : null;
+    const pool = code ? getStockpile(db, invasion.guildId, code) : undefined;
+    const exhausted = Boolean(
+      spentSide && (!pool || pool.troops + pool.gold + pool.food <= 0),
+    );
+
+    return {
+      invasion: getInvasion(db, invasion.id)!,
+      tick,
+      spentSide,
+      exhausted,
+    };
+  })();
+}
+
+/** Everything that happened when a war ended. */
+export interface ConclusionReport {
+  invasion: Invasion;
+  /** The side that won. */
+  winner: Side;
+  /** How the war ended. */
+  reason: 'surrender' | 'exhausted' | 'unanswered';
+  /** Returned to the attacker's stockpile. */
+  attackerReturns: Stake;
+  /** Returned to the defender's stockpile. */
+  defenderReturns: Stake;
+  /** Taken from the defender's field force by a victorious attacker. */
+  captured: Stake;
+  /** Stockpile looted from the conquered country. */
   loot: Stockpile | null;
-  /** Players moved into the winning country, on a conquest. */
+  /** Players moved into the winning country. */
   transferredPlayers: string[];
   /** Countries that changed hands, the defender included. */
   capturedTerritories: CountryState[];
@@ -393,26 +595,24 @@ export interface ResolutionReport {
 }
 
 /**
- * Resolves a battle and applies everything that follows from it.
+ * Ends a war and applies everything that follows from it.
  *
- * Resolution happens at the end of the defence window regardless of when the
- * defence vote passed, so defenders cannot probe the timing by approving late.
+ * Both sides always get their surviving supplies home, with one exception:
+ * when the defender falls, whatever it still had in the field is absorbed
+ * along with its country, its stockpile, its people, and its territory. An
+ * attacker that gives up simply marches what is left of its army home — it
+ * loses the war, not its army.
  *
- * The whole settlement — casualties, returns, loot, players, territory,
- * cooldowns — is one transaction.
+ * The whole settlement is one transaction. A half-applied conquest would be a
+ * corrupt game.
  */
-export function resolveInvasion(
+export function concludeWar(
   db: Database,
   invasion: Invasion,
+  winner: Side,
+  reason: ConclusionReport['reason'],
   now: number,
-  random: () => number = Math.random,
-): ResolutionReport {
-  const defense = invasion.defense ?? NO_STAKE;
-  const outcome = resolveBattle(invasion.attack, defense, {
-    attacker: rollLuck(random),
-    defender: rollLuck(random),
-  });
-
+): ConclusionReport {
   return db.transaction(() => {
     const {guildId, attackerCode, defenderCode} = invasion;
 
@@ -421,17 +621,20 @@ export function resolveInvasion(
       'UPDATE countries SET invade_cooldown_until = ? WHERE guild_id = ? AND code = ?',
     ).run(now + COOLDOWNS.invade, guildId, attackerCode);
 
-    if (!outcome.attackerWins) {
-      addResources(db, guildId, defenderCode, outcome.defenderReturns);
-      addResources(db, guildId, defenderCode, outcome.captured);
+    if (winner === 'defender') {
+      addResources(db, guildId, attackerCode, invasion.attackField);
+      addResources(db, guildId, defenderCode, invasion.defenseField);
       db.prepare(
         'UPDATE countries SET defense_immunity_until = ? WHERE guild_id = ? AND code = ?',
       ).run(now + INVASIONS.successfulDefenseImmunity, guildId, defenderCode);
       finishInvasion(db, invasion.id, 'resolved_defender_win', now);
       return {
         invasion,
-        outcome,
-        defense,
+        winner,
+        reason,
+        attackerReturns: invasion.attackField,
+        defenderReturns: invasion.defenseField,
+        captured: NO_STAKE,
         loot: null,
         transferredPlayers: [],
         capturedTerritories: [],
@@ -442,14 +645,14 @@ export function resolveInvasion(
     }
 
     const defeated = getCountry(db, guildId, defenderCode)!;
-    const winner = getCountry(db, guildId, attackerCode)!;
+    const victor = getCountry(db, guildId, attackerCode)!;
 
-    // Survivors march home; their supplies were spent on the campaign.
-    addResources(db, guildId, attackerCode, outcome.attackerReturns);
+    // The survivors march home, and what the defenders still had in the field
+    // is carried off with everything else.
+    addResources(db, guildId, attackerCode, invasion.attackField);
+    addResources(db, guildId, attackerCode, invasion.defenseField);
 
-    // Everything the defender had left is carried off.
     const loot = lootStockpile(db, guildId, defenderCode, attackerCode);
-
     const transferredPlayers = transferPlayers(db, {
       guildId,
       fromCode: defenderCode,
@@ -460,8 +663,7 @@ export function resolveInvasion(
     // The defeated country and everything it had taken become the winner's.
     const inherited = listTerritories(db, guildId, defenderCode);
     db.prepare(
-      `UPDATE countries SET owner_code = ?
-        WHERE guild_id = ? AND owner_code = ?`,
+      'UPDATE countries SET owner_code = ? WHERE guild_id = ? AND owner_code = ?',
     ).run(attackerCode, guildId, defenderCode);
     db.prepare(
       `UPDATE countries
@@ -476,8 +678,11 @@ export function resolveInvasion(
 
     return {
       invasion,
-      outcome,
-      defense,
+      winner,
+      reason,
+      attackerReturns: invasion.attackField,
+      defenderReturns: NO_STAKE,
+      captured: invasion.defenseField,
       loot,
       transferredPlayers,
       capturedTerritories: [
@@ -486,16 +691,16 @@ export function resolveInvasion(
       ],
       defeatedRoleId: defeated.roleId,
       defeatedChannelId: defeated.channelId,
-      winnerRoleId: winner.roleId,
+      winnerRoleId: victor.roleId,
     };
   })();
 }
 
 /**
- * Calls off an invasion and hands back everything that was escrowed.
+ * Calls off a war and hands back everything that was escrowed.
  *
  * Used when a country empties mid-war: there is nobody left to fight it, and
- * the other side should not lose a stake to an opponent that ceased to exist.
+ * the other side should not lose a force to an opponent that ceased to exist.
  */
 export function cancelInvasion(
   db: Database,
@@ -503,21 +708,19 @@ export function cancelInvasion(
   now: number,
 ): void {
   db.transaction(() => {
-    if (invasion.status === 'defense_window') {
+    if (invasion.status !== 'attack_vote') {
       addResources(
         db,
         invasion.guildId,
         invasion.attackerCode,
-        invasion.attack,
+        invasion.attackField,
       );
-      if (invasion.defense) {
-        addResources(
-          db,
-          invasion.guildId,
-          invasion.defenderCode,
-          invasion.defense,
-        );
-      }
+      addResources(
+        db,
+        invasion.guildId,
+        invasion.defenderCode,
+        invasion.defenseField,
+      );
     }
     const pending = getPendingProposal(db, invasion.id);
     if (pending) finishProposal(db, pending.id, 'expired', now);

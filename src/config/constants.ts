@@ -69,10 +69,25 @@ export const INVASIONS = {
    * at stake.
    */
   supplyRatioDivisor: 2,
-  /** Fraction of committed troops the attacker loses when they win. */
-  attackerCasualtyRate: 0.5,
-  /** Fraction of committed troops the defender loses when they win. */
-  defenderCasualtyRate: 0.3,
+} as const;
+
+/**
+ * A war is fought over many rounds rather than settled in one roll. Both
+ * sides bleed every tick, weighted by what the enemy brought, until one of
+ * them has nothing left on the field and must reinforce or give up.
+ */
+export const WAR = {
+  /** How often an ongoing war exchanges blows. */
+  tickInterval: duration(1 * HOUR),
+  /** Share of a side's committed force lost per tick when evenly matched. */
+  baseLossRate: 0.15,
+  /** However lopsided a war is, a tick never costs less or more than this. */
+  lossRateRange: {min: 0.05, max: 0.5},
+  /**
+   * How long a country has to approve reinforcements once its committed
+   * force is spent. Saying nothing is surrender.
+   */
+  reinforcementWindow: duration(6 * HOUR),
 } as const;
 
 export const GAME = {
