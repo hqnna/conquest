@@ -29,6 +29,10 @@
             # Inspecting the game database by hand.
             sqlite
 
+            # Fallback SVG rasterizer for the map, used when the napi
+            # prebuilt binding will not load.
+            resvg
+
             # node-gyp prerequisites for better-sqlite3's native build.
             python3
             pkg-config

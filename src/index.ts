@@ -8,14 +8,22 @@ import {
 } from './discord/client.js';
 import {loadEnv} from './env.js';
 import {startSweeper} from './game/sweeper.js';
+import {createMapRenderer} from './map/index.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
   const db = openDatabase(env.databasePath);
   const client = createClient();
 
-  registerInteractionHandler(client, {db});
-  registerMemberHandler(client, {db});
+  const map = await createMapRenderer();
+  console.log(
+    map
+      ? `Map rendering enabled via ${map.backend}.`
+      : 'No SVG rasterizer available; /map will show text standings only.',
+  );
+
+  registerInteractionHandler(client, {db, map});
+  registerMemberHandler(client, {db, map});
 
   let stopSweeper: (() => void) | undefined;
   client.once(Events.ClientReady, ready => {
@@ -25,7 +33,7 @@ async function main(): Promise<void> {
     );
     // Deadlines live in the database, so the sweeper picks up anything that
     // expired while Conquest was down.
-    stopSweeper = startSweeper(db, client);
+    stopSweeper = startSweeper(db, client, map);
   });
 
   const shutdown = (signal: string) => {

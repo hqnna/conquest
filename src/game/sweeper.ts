@@ -9,6 +9,7 @@
 import type {Client, Guild} from 'discord.js';
 import {GAME} from '../config/constants.js';
 import type {Database} from '../db/index.js';
+import type {MapRenderer} from '../map/index.js';
 import {
   getInvasion,
   listExpiredAttackVotes,
@@ -63,6 +64,7 @@ export async function sweep(
   db: Database,
   client: Client,
   now: number = Date.now(),
+  map?: MapRenderer,
 ): Promise<SweepResult> {
   let votesExpired = 0;
   let proposalsExpired = 0;
@@ -106,7 +108,7 @@ export async function sweep(
     const guild = await guildOf(client, invasion.guildId);
     if (!guild) continue;
     try {
-      await endWar(db, guild, invasion, 'attacker', 'unanswered', now);
+      await endWar(db, guild, invasion, 'attacker', 'unanswered', now, map);
       warsUnanswered++;
     } catch (error) {
       console.error(`Could not settle invasion ${invasion.id}:`, error);
@@ -137,6 +139,7 @@ export async function sweep(
         invasion.reinforcingSide === 'attacker' ? 'defender' : 'attacker',
         'surrender',
         now,
+        map,
       );
       warsEnded++;
     } catch (error) {
@@ -152,7 +155,7 @@ export async function sweep(
     const guild = await guildOf(client, guildId);
     if (!guild) continue;
     try {
-      await concludeRound(db, guild, victory, now);
+      await concludeRound(db, guild, victory, now, map);
       roundsWon++;
     } catch (error) {
       console.error(`Could not end the round in ${guildId}:`, error);
@@ -176,12 +179,16 @@ export async function sweep(
  *
  * @returns a function that stops it.
  */
-export function startSweeper(db: Database, client: Client): () => void {
+export function startSweeper(
+  db: Database,
+  client: Client,
+  map?: MapRenderer,
+): () => void {
   let running = false;
   const timer = setInterval(() => {
     if (running) return;
     running = true;
-    void sweep(db, client)
+    void sweep(db, client, Date.now(), map)
       .catch((error: unknown) => {
         console.error('Sweep failed:', error);
       })

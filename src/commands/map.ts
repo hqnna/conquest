@@ -9,7 +9,9 @@ import {countryLabel, findCountry} from '../data/countries.js';
 import {listCountriesByStatus, territoryCounts} from '../db/countries.js';
 import {getGuildConfig} from '../db/guild-config.js';
 import {memberCounts} from '../db/players.js';
+import {mapEditReply, withMapImage} from '../discord/map-message.js';
 import {ACCENT, container, v2EditReply} from '../discord/ui.js';
+import {MAP_REGIONS, mapState} from '../map/index.js';
 import type {Command, CommandContext} from './types.js';
 
 /** One country's standing in the world. */
@@ -73,20 +75,24 @@ export function worldCard(
   const leader = entries[0];
   const progress = `**${findCountry(leader.code)?.name ?? leader.code}** leads with ${leader.territories} of the ${threshold} territories needed to win.`;
 
-  return container(
-    ACCENT.neutral,
-    '## The world',
-    rows.join('\n'),
-    progress,
-    '*Conquest renders this as a map once map rendering lands.*',
-  );
+  return container(ACCENT.neutral, '## The world', rows.join('\n'), progress);
 }
 
 export const mapCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('map')
     .setDescription('See who holds what')
-    .setContexts(InteractionContextType.Guild),
+    .setContexts(InteractionContextType.Guild)
+    .addStringOption(option =>
+      option
+        .setName('region')
+        .setDescription('Crop the map to one continent, for readability')
+        .setRequired(false)
+        // A small, fixed set, so these are choices rather than autocomplete.
+        .addChoices(
+          ...MAP_REGIONS.map(region => ({name: region, value: region})),
+        ),
+    ),
 
   async execute(
     interaction: ChatInputCommandInteraction,
@@ -98,18 +104,38 @@ export const mapCommand: Command = {
     await interaction.deferReply({flags: MessageFlags.Ephemeral});
 
     const config = getGuildConfig(ctx.db, guildId);
+    const region = interaction.options.getString('region') ?? undefined;
     const entries = standings(
       listCountriesByStatus(ctx.db, guildId, 'active').map(state => state.code),
       memberCounts(ctx.db, guildId),
       territoryCounts(ctx.db, guildId),
     );
+    const card = worldCard(
+      entries,
+      config?.dominationThreshold ?? GAME.defaultDominationThreshold,
+    );
+
+    // Without a rasterizer the standings stand alone, which is exactly what
+    // /map showed before it could draw anything.
+    const rendered = await ctx.map
+      ?.render(mapState(ctx.db, guildId, region))
+      .catch((error: unknown) => {
+        console.error('Could not render the map:', error);
+        return undefined;
+      });
+
+    if (!rendered) {
+      await interaction.editReply(v2EditReply(card));
+      return;
+    }
 
     await interaction.editReply(
-      v2EditReply(
-        worldCard(
-          entries,
-          config?.dominationThreshold ?? GAME.defaultDominationThreshold,
+      mapEditReply(
+        withMapImage(
+          card,
+          region ? `The state of ${region}` : 'The state of the world',
         ),
+        rendered.png,
       ),
     );
   },

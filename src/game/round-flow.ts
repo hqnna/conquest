@@ -8,6 +8,7 @@ import type {Database} from '../db/index.js';
 import {announce} from '../discord/log.js';
 import {ACCENT, container} from '../discord/ui.js';
 import type {Victory} from './victory.js';
+import type {MapRenderer} from '../map/index.js';
 import {resetGame, summariseVictory} from './victory.js';
 
 /** A country's name for copy, falling back to its code. */
@@ -75,6 +76,7 @@ export async function endRound(
   guild: Guild,
   victory: Victory | null,
   now: number,
+  map?: MapRenderer,
 ): Promise<{channelsDeleted: number; rolesDeleted: number}> {
   if (victory) {
     const summary = summariseVictory(db, guild.id, victory.code);
@@ -90,6 +92,8 @@ export async function endRound(
   }
 
   const teardown = resetGame(db, guild.id, now);
+  // Every cached picture is of a world that no longer exists.
+  map?.clear();
 
   let channelsDeleted = 0;
   for (const channelId of teardown.channelIds) {
@@ -147,7 +151,8 @@ export async function concludeRound(
   guild: Guild,
   victory: Victory,
   now: number,
+  map?: MapRenderer,
 ): Promise<void> {
-  await endRound(db, guild, victory, now);
+  await endRound(db, guild, victory, now, map);
   await announceNewRound(db, guild);
 }

@@ -171,8 +171,8 @@ Every argument-taking command uses the most helpful input mechanism Discord offe
 
 Render a flat world map image showing the game state, attached to the `/map` reply as a PNG.
 
-- **Base asset:** ship a public-domain world map SVG in the repo where each country's `<path>` carries its ISO 3166-1 alpha-2 code as an id/class (Wikimedia's `BlankMap-World.svg` and Natural Earth-derived SVGs are public domain and structured this way). This must use the same ISO codes as the countries JSON so lookups are trivial.
-- **Coloring:** don't draw geometry — just rewrite fills on the base SVG per render:
+- **Base asset:** ship a public-domain world map SVG in the repo where each country's `<path>` carries its ISO 3166-1 alpha-2 code as its `id`. Conquest generates it from Natural Earth data (public domain, via `world-atlas`) rather than fetching a prebuilt one, so the codes match the countries JSON by construction; the generator also emits a viewBox per continent for the `region` crop.
+- **Coloring:** don't draw geometry — inject one `<style>` block per render, which outranks the fills already on the paths (a bare `path{}` default so that a `#FR{}` rule beats it):
   - Inactive: light gray.
   - Active: a stable, distinct color per country, assigned deterministically (hash of country code into a curated palette of ~20 high-contrast colors) so a country keeps its color across renders.
   - Defeated territory: the **owner's color at reduced opacity/lightness**, so empires read as one blob with a bright capital.

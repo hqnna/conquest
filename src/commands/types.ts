@@ -4,10 +4,16 @@ import type {
   RESTPostAPIApplicationCommandsJSONBody,
 } from 'discord.js';
 import type {Database} from '../db/index.js';
+import type {MapRenderer} from '../map/index.js';
 
 /** Everything a command handler needs beyond the interaction itself. */
 export interface CommandContext {
   db: Database;
+  /**
+   * Renders the world map, or undefined when no rasterizer would load — in
+   * which case `/map` falls back to the text standings it showed before.
+   */
+  map?: MapRenderer;
 }
 
 /** One slash command: its registration payload and its handlers. */

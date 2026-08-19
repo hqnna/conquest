@@ -12,8 +12,9 @@ one country dominates, the round ends and the game resets.
 Phases 1 to 5 of the build order are implemented: the Nix toolchain and
 project scaffold, the SQLite layer with the full game schema, per-guild
 configuration and `/setup`, countries with their role and channel lifecycle,
-resource gathering, the whole invasion pipeline as a war of attrition, and the
-win condition with its reset flow. Map rendering and `/help` follow.
+resource gathering, the whole invasion pipeline as a war of attrition, the win
+condition with its reset flow, and map rendering. `/help` and the final polish
+pass follow.
 
 | Command | Who | Effect |
 |---|---|---|
@@ -29,7 +30,7 @@ win condition with its reset flow. Map rendering and `/help` follow.
 | `/surrender` | Player | Give up a war your country cannot continue |
 | `/game reset` | Admin | Wipe the world and start a fresh round (confirmed) |
 | `/game config threshold:<n>` | Admin | Change how much territory wins the round |
-| `/map` | Anyone | Who holds what (text standings until rendering lands) |
+| `/map [region]` | Anyone | The rendered world map, with the standings as its legend |
 
 ## Development
 
@@ -104,8 +105,30 @@ nix develop -c pnpm generate-countries
 ```
 
 The alpha-2 code is the join between that file, every `country_code` in the
-database, and the map SVG that arrives with map rendering — those must stay
-identical.
+database, and the map SVG — those must stay identical.
+
+### The map
+
+`src/data/world.svg` is generated from Natural Earth data (public domain) with
+every country path carrying its ISO alpha-2 code as its `id`, alongside
+`world-map.json` holding the canvas size and a viewBox per continent. Both are
+committed, so the running bot needs neither the map packages nor a network:
+
+```sh
+nix develop -c pnpm generate-map
+```
+
+Rendering never rewrites geometry. Conquest injects a single stylesheet and CSS
+outranks the presentation attributes already on the paths, so colouring a
+country is one rule keyed by its code. Rendered PNGs are cached against a hash
+of exactly the state a picture depends on — statuses, owners, wars, crop, width
+— so an unchanged world is never drawn twice.
+
+The rasterizer sits behind a small interface with two implementations:
+`@resvg/resvg-js` in process, and the nixpkgs `resvg` command as a fallback if
+that native binding will not load. Conquest probes them at startup and says
+which it picked. If neither works, `/map` falls back to text standings rather
+than failing.
 
 ### How a war runs
 

@@ -22,7 +22,10 @@ import {
 import type {Invasion, Side, StakeProposal} from '../db/invasions.js';
 import {countCountryMembers} from '../db/players.js';
 import {tallyVotes} from '../db/votes.js';
-import {announce} from '../discord/log.js';
+import {announce, getGameLog} from '../discord/log.js';
+import {mapMessage, withMapImage} from '../discord/map-message.js';
+import {mapState} from '../map/index.js';
+import type {MapRenderer} from '../map/index.js';
 import {
   attackVoteCard,
   closedVoteCard,
@@ -488,6 +491,7 @@ export async function endWar(
   winner: Side,
   reason: ConclusionReport['reason'],
   now: number,
+  map?: MapRenderer,
 ): Promise<void> {
   const pending = getPendingProposal(db, invasion.id);
   if (pending) finishProposal(db, pending.id, 'expired', now);
@@ -512,6 +516,36 @@ export async function endWar(
   }
 
   await applyConquest(db, guild, invasion, report);
+  await postConquestMap(db, guild, map);
+}
+
+/**
+ * Posts the world as it now stands, after a conquest has redrawn it.
+ *
+ * The map is the clearest way to see what an empire has become, so it follows
+ * every conquest into the game log — and never blocks the conquest itself.
+ */
+async function postConquestMap(
+  db: Database,
+  guild: Guild,
+  map?: MapRenderer,
+): Promise<void> {
+  if (!map) return;
+  try {
+    const rendered = await map.render(mapState(db, guild.id));
+    const log = await getGameLog(db, guild);
+    await log?.send(
+      mapMessage(
+        withMapImage(
+          container(ACCENT.attacker, '## The world has changed hands'),
+          'The world after the conquest',
+        ),
+        rendered.png,
+      ),
+    );
+  } catch (error) {
+    console.error(`Could not post the map for ${guild.id}:`, error);
+  }
 }
 
 /** The Discord half of a conquest: roles moved, channels archived. */
