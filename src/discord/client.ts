@@ -1,6 +1,7 @@
 import {Client, GatewayIntentBits, Events} from 'discord.js';
-import type {Interaction} from 'discord.js';
+import type {GuildMember, Interaction, PartialGuildMember} from 'discord.js';
 import {COMMANDS_BY_NAME} from '../commands/index.js';
+import {removePlayerFromCountry} from '../commands/leave.js';
 import type {CommandContext} from '../commands/types.js';
 import {errorReply} from './ui.js';
 
@@ -8,10 +9,42 @@ import {errorReply} from './ui.js';
  * Creates the Conquest gateway client.
  *
  * Conquest reads no message content: everything happens through slash
- * commands and message components, so only the Guilds intent is needed.
+ * commands and message components. GuildMembers is needed to notice players
+ * leaving the server and to look members up when their roles change — it is
+ * privileged, so it must be enabled for the application in Discord's
+ * developer portal.
  */
 export function createClient(): Client {
-  return new Client({intents: [GatewayIntentBits.Guilds]});
+  return new Client({
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+  });
+}
+
+/**
+ * Treats a player leaving the server as leaving their country, without the
+ * rejoin cooldown: there is nothing to discourage and no one to hold to it.
+ * If they were the last of their country, the country falls with them.
+ */
+export function registerMemberHandler(
+  client: Client,
+  ctx: CommandContext,
+): void {
+  client.on(
+    Events.GuildMemberRemove,
+    async (member: GuildMember | PartialGuildMember) => {
+      try {
+        await removePlayerFromCountry(ctx.db, member.guild, member.id, {
+          withCooldown: false,
+          now: Date.now(),
+        });
+      } catch (error) {
+        console.error(
+          `Could not release ${member.id} from their country in ${member.guild.id}:`,
+          error,
+        );
+      }
+    },
+  );
 }
 
 /**

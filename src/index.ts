@@ -1,7 +1,11 @@
 import {Events} from 'discord.js';
 import {DEV_MODE} from './config/constants.js';
 import {openDatabase} from './db/index.js';
-import {createClient, registerInteractionHandler} from './discord/client.js';
+import {
+  createClient,
+  registerInteractionHandler,
+  registerMemberHandler,
+} from './discord/client.js';
 import {loadEnv} from './env.js';
 
 async function main(): Promise<void> {
@@ -10,6 +14,7 @@ async function main(): Promise<void> {
   const client = createClient();
 
   registerInteractionHandler(client, {db});
+  registerMemberHandler(client, {db});
 
   client.once(Events.ClientReady, ready => {
     console.log(
