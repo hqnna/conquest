@@ -1,0 +1,34 @@
+{
+  "name": "conquest",
+  "version": "0.1.0",
+  "description": "A Discord bot running a persistent, per-guild strategy game",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "build/src/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "lint": "gts lint",
+    "fix": "gts fix",
+    "format": "gts fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "deploy-commands": "tsx src/scripts/deploy-commands.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "discord.js": "^14.27.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.20.1",
+    "gts": "^7.0.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}
