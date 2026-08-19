@@ -1,5 +1,6 @@
 import type {Database} from 'better-sqlite3';
 import {migration as initialSchema} from './migrations/001-initial-schema.js';
+import {migration as invasionMessaging} from './migrations/002-invasion-messaging.js';
 
 /** One forward-only schema change. */
 export interface Migration {
@@ -12,7 +13,10 @@ export interface Migration {
 }
 
 /** Every migration, in the order they must be applied. */
-export const MIGRATIONS: readonly Migration[] = [initialSchema];
+export const MIGRATIONS: readonly Migration[] = [
+  initialSchema,
+  invasionMessaging,
+];
 
 const MIGRATIONS_TABLE = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
