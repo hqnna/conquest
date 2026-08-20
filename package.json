@@ -11,7 +11,7 @@
   "main": "build/src/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && cp src/data/world.svg build/src/data/world.svg",
     "lint": "gts lint",
     "fix": "gts fix",
     "format": "gts fix",
