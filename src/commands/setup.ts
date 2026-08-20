@@ -67,11 +67,17 @@ export function resolveExistingLogChannel(
 }
 
 /**
- * Permission overwrites that make the game log a read-only broadcast channel:
- * everyone can read it and react, only Conquest can post.
+ * Permission overwrites for the war room: the one place every country can
+ * speak to every other one.
  *
- * The view permission is granted explicitly rather than inherited, so the log
- * stays public even when the category it sits in is not.
+ * Conquest posts the game log here, but the channel is not a broadcast — the
+ * whole server can talk in it, because diplomacy between countries has nowhere
+ * else to happen: country channels are private to their own members.
+ *
+ * The view permission is granted explicitly rather than inherited, so the war
+ * room stays public even when the category it sits in is not. Private threads
+ * are the one thing denied: a back room inside the public channel would put
+ * conversations outside the country roles that are supposed to govern them.
  */
 export function logChannelOverwrites(
   everyoneRoleId: string,
@@ -84,13 +90,11 @@ export function logChannelOverwrites(
         PermissionFlagsBits.ViewChannel,
         PermissionFlagsBits.ReadMessageHistory,
         PermissionFlagsBits.AddReactions,
-      ],
-      deny: [
         PermissionFlagsBits.SendMessages,
         PermissionFlagsBits.SendMessagesInThreads,
         PermissionFlagsBits.CreatePublicThreads,
-        PermissionFlagsBits.CreatePrivateThreads,
       ],
+      deny: [PermissionFlagsBits.CreatePrivateThreads],
     },
     {
       id: conquestId,
@@ -198,12 +202,13 @@ export const setupCommand: Command = {
         position: 0,
         permissionOverwrites: overwrites,
         topic:
-          'Conquest game log — declarations, battles, conquests, and resets.',
-        reason: 'Conquest setup: public game log',
+          'Conquest war room — the game log, and the one channel every country ' +
+          'can talk in. Declarations, battles, conquests, and diplomacy.',
+        reason: 'Conquest setup: public war room',
       });
     } else {
-      // Re-running /setup repairs the log: move it into the (possibly new)
-      // category, back to the top, and restore read-only access.
+      // Re-running /setup repairs the war room: move it into the (possibly
+      // new) category, back to the top, and restore its permissions.
       await logChannel.edit({
         parent: resolved.id,
         position: 0,
@@ -234,6 +239,8 @@ export const setupCommand: Command = {
             '## Conquest is ready',
             `Country channels will appear in **${resolved.name}**. ` +
               'Global events — declarations, battles, conquests, and the end of a round — are posted here.',
+            'Everyone can talk in this channel. Country channels are private, so this is where countries strike bargains, ' +
+              'threaten each other, and agree to merge.',
             'Run `/join` to claim a country, then `/help` to learn the game.',
           ),
         ),
@@ -247,8 +254,8 @@ export const setupCommand: Command = {
           '## Conquest is set up',
           [
             `**Country channels:** ${resolved}`,
-            `**Game log:** ${logChannel}${logChannelCreated ? ' (created)' : ' (reused)'} — read-only, pinned to the top of the category`,
-            `**Country slots left:** ${remainingCategorySlots(resolved)} of ${DISCORD_LIMITS.channelsPerCategory} (the game log takes one)`,
+            `**War room:** ${logChannel}${logChannelCreated ? ' (created)' : ' (reused)'} — the game log, open for everyone to talk in, pinned to the top of the category`,
+            `**Country slots left:** ${remainingCategorySlots(resolved)} of ${DISCORD_LIMITS.channelsPerCategory} (the war room takes one)`,
           ].join('\n'),
           warning,
           'Players can now run `/join`. The round ends when one country has conquered every other one.',

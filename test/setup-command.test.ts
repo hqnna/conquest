@@ -86,18 +86,19 @@ describe('resolveExistingLogChannel', () => {
 describe('logChannelOverwrites', () => {
   const [everyone, conquest] = logChannelOverwrites('everyone-role', 'bot-id');
 
-  it('lets everyone read and react but not post', () => {
+  it('lets everyone read, react, and talk — countries negotiate here', () => {
     expect(everyone.id).toBe('everyone-role');
     expect(everyone.allow).toContain(PermissionFlagsBits.ViewChannel);
     expect(everyone.allow).toContain(PermissionFlagsBits.ReadMessageHistory);
     expect(everyone.allow).toContain(PermissionFlagsBits.AddReactions);
-    expect(everyone.deny).toContain(PermissionFlagsBits.SendMessages);
+    expect(everyone.allow).toContain(PermissionFlagsBits.SendMessages);
+    expect(everyone.deny).not.toContain(PermissionFlagsBits.SendMessages);
   });
 
-  it('denies every way of starting a thread, which would be writable', () => {
-    expect(everyone.deny).toContain(PermissionFlagsBits.CreatePublicThreads);
+  it('allows public threads and denies private ones', () => {
+    expect(everyone.allow).toContain(PermissionFlagsBits.CreatePublicThreads);
+    expect(everyone.allow).toContain(PermissionFlagsBits.SendMessagesInThreads);
     expect(everyone.deny).toContain(PermissionFlagsBits.CreatePrivateThreads);
-    expect(everyone.deny).toContain(PermissionFlagsBits.SendMessagesInThreads);
   });
 
   it('leaves Conquest able to post and attach the map', () => {

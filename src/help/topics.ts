@@ -103,6 +103,7 @@ function buildPages(
           ].join('\n'),
           [
             '**3. Talk.** Your country channel is private. Nobody outside it can read what you are planning, and you cannot see what anyone else is planning either.',
+            '**The war room is the exception.** Everyone can talk there, so it is where countries reach each other — threats, bargains, and offers to merge.',
             '`/country name:<name>` tells you how big a rival is and whether it can be attacked — but never what it has in its stockpile.',
           ].join('\n'),
           [

@@ -87,9 +87,13 @@ country role changes. The Message Content intent is never used.
 ### Setting up a server
 
 An admin with Manage Server runs `/setup category:<category>`. Conquest creates
-a `#war-room` game log pinned to the top of that category, with the country
-channels appearing underneath it as countries activate. The war room is
-read-only: everyone can read it and react, only Conquest can post.
+a `#war-room` pinned to the top of that category, with the country channels
+appearing underneath it as countries activate. Conquest posts every global
+event there — declarations, battles, conquests, the end of a round — and
+everyone can talk in it. Country channels are private to their own members, so
+the war room is the only place countries can reach each other: it is where
+threats, bargains, and merge offers are made. Public threads are allowed;
+private ones are not.
 
 Discord caps a category at 50 channels. The war room takes one, archived
 channels of defeated countries keep theirs, and Conquest never frees a slot, so
@@ -97,9 +101,9 @@ capacity only shrinks over a round. Late-game joins therefore funnel players
 into countries that already exist rather than founding new ones — intended, but
 worth knowing.
 
-Re-running `/setup` re-points the category and reuses the existing game log,
-moving it back to the top of the category and restoring its read-only
-permissions. It does not reset the guild's tuning or wipe the game.
+Re-running `/setup` re-points the category and reuses the existing war room,
+moving it back to the top of the category and restoring its permissions. It
+does not reset the guild's tuning or wipe the game.
 
 ### Country data
 
