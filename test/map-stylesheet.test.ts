@@ -1,7 +1,9 @@
 import {describe, expect, it} from 'vitest';
+import {COUNTRIES} from '../src/data/countries.js';
 import {
   COUNTRY_PALETTE,
   INACTIVE_COLOR,
+  OCEAN_COLOR,
   countryColor,
 } from '../src/game/colors.js';
 import {
@@ -27,6 +29,22 @@ const BASE =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" width="1200" height="620">\n' +
   '<style id="conquest-colors"></style>\n<rect id="ocean"/>\n<g id="countries">\n' +
   '<path id="FR" d="M0 0"/>\n<path id="DE" d="M0 0"/>\n</g>\n</svg>';
+
+/** WCAG relative luminance, for judging how a colour reads against another. */
+function luminance(color: number): number {
+  const channel = (shift: number) => {
+    const value = ((color >> shift) & 0xff) / 255;
+    return value <= 0.03928
+      ? value / 12.92
+      : Math.pow((value + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0);
+}
+
+/** The channels of a colour, so a shade can be placed between two others. */
+function channels(color: number): number[] {
+  return [(color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff];
+}
 
 describe('the shipped map', () => {
   it('covers the great majority of the world', () => {
@@ -73,9 +91,7 @@ describe('fillFor', () => {
     const held = fillFor(territory('DE', 'FR'));
     expect(held).not.toBe(owner);
     expect(COUNTRY_PALETTE).not.toContain(held);
-    // Same hue family, simply dimmer: every channel is reduced.
-    expect(held >> 16).toBeLessThanOrEqual(owner >> 16);
-    expect(held & 0xff).toBeLessThanOrEqual(owner & 0xff);
+    expect(luminance(held)).toBeLessThan(luminance(owner));
   });
 
   it('draws an ownerless conquest as unclaimed', () => {
@@ -86,6 +102,75 @@ describe('fillFor', () => {
 
   it('gives two countries of one empire the same shade', () => {
     expect(fillFor(territory('DE', 'FR'))).toBe(fillFor(territory('BE', 'FR')));
+  });
+});
+
+describe('a conquered country reads as its new owner', () => {
+  // The whole palette, not one colour: the shade used to be a slide towards
+  // black, which held for the mid-tones and quietly failed everywhere else —
+  // a pale owner's territory turned muddy grey and a dark owner's sank into
+  // the sea, so a conquest looked like nobody owned the ground.
+
+  /** A country whose colour is the given palette entry, for each entry. */
+  const owners = new Map<number, string>();
+  for (const country of COUNTRIES) {
+    const color = countryColor(country.code);
+    if (!owners.has(color)) owners.set(color, country.code);
+  }
+
+  /** How a country held by an owner of this colour is drawn. */
+  function shadeOf(color: number): number {
+    return fillFor(territory('DE', owners.get(color)!));
+  }
+
+  /** Every palette colour, named so a failure says which empire broke. */
+  const empires = COUNTRY_PALETTE.map(color => ({
+    color,
+    name: `#${color.toString(16).padStart(6, '0')}`,
+  }));
+
+  it('has a real owner for every colour in the palette', () => {
+    expect(owners.size).toBe(COUNTRY_PALETTE.length);
+  });
+
+  it.each(empires)('keeps most of $name brightness', ({color}) => {
+    // A slide towards black left barely a quarter of it, which is what made
+    // the darker half of the palette unreadable.
+    expect(luminance(shadeOf(color))).toBeGreaterThanOrEqual(
+      0.35 * luminance(color),
+    );
+  });
+
+  it.each(empires)('draws $name dimmer than its capital', ({color}) => {
+    expect(luminance(shadeOf(color))).toBeLessThanOrEqual(luminance(color));
+  });
+
+  it.each(empires)('mixes $name with the sea, not black', ({color}) => {
+    // Every channel sits between the owner's and the water's, which is what
+    // stops a colour being drained of the hue that identifies it.
+    const held = channels(shadeOf(color));
+    const owner = channels(color);
+    const sea = channels(OCEAN_COLOR);
+    for (const index of [0, 1, 2]) {
+      expect(held[index]).toBeGreaterThanOrEqual(
+        Math.min(owner[index], sea[index]),
+      );
+      expect(held[index]).toBeLessThanOrEqual(
+        Math.max(owner[index], sea[index]),
+      );
+    }
+  });
+
+  it('never draws a held country as unclaimed grey', () => {
+    for (const color of COUNTRY_PALETTE) {
+      expect(shadeOf(color)).not.toBe(INACTIVE_COLOR);
+    }
+  });
+
+  it('gives every empire a shade of its own', () => {
+    expect(new Set(COUNTRY_PALETTE.map(shadeOf)).size).toBe(
+      COUNTRY_PALETTE.length,
+    );
   });
 });
 

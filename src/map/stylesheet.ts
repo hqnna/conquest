@@ -8,7 +8,12 @@
  * rather than a search through geometry.
  */
 import worldMap from '../data/world-map.json' with {type: 'json'};
-import {INACTIVE_COLOR, countryColor, dim} from '../game/colors.js';
+import {
+  INACTIVE_COLOR,
+  OCEAN_COLOR,
+  blend,
+  countryColor,
+} from '../game/colors.js';
 
 /** Geometry and regions of the shipped map. */
 export interface WorldMap {
@@ -48,16 +53,19 @@ function hex(color: number): string {
 }
 
 /**
- * How dark a conquered territory is drawn against its owner's colour, so an
- * empire reads as one blob with a bright capital.
+ * How far a conquered territory is shaded towards the sea, so an empire reads
+ * as one blob with a brighter capital.
+ *
+ * The shade has to stay recognisably the owner's colour — that is the only
+ * thing on the map that says who holds the ground — so this leans gentle.
  */
-const TERRITORY_DIMMING = 0.45;
+const TERRITORY_SHADING = 0.4;
 
 /** The colour a country is drawn in. */
 export function fillFor(country: MapCountry): number {
   if (country.status === 'defeated') {
     return country.ownerCode
-      ? dim(countryColor(country.ownerCode), TERRITORY_DIMMING)
+      ? blend(countryColor(country.ownerCode), OCEAN_COLOR, TERRITORY_SHADING)
       : INACTIVE_COLOR;
   }
   return countryColor(country.code);
@@ -74,8 +82,8 @@ export function stylesheet(state: MapState): string {
   // rule has to outrank it, and `#countries path` would outrank *it* on
   // specificity and leave the whole world grey.
   const rules = [
-    '#ocean{fill:#0b1c2c}',
-    `path{fill:${hex(INACTIVE_COLOR)};stroke:#0b1c2c;stroke-width:0.5}`,
+    `#ocean{fill:${hex(OCEAN_COLOR)}}`,
+    `path{fill:${hex(INACTIVE_COLOR)};stroke:${hex(OCEAN_COLOR)};stroke-width:0.5}`,
   ];
 
   for (const country of state.countries) {

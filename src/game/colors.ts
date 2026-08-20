@@ -14,6 +14,13 @@ export const COUNTRY_PALETTE = [
 export const INACTIVE_COLOR = 0xbfbfbf;
 
 /**
+ * The sea the map is drawn on, and the colour a conquered country is shaded
+ * towards. Territories are blended into the map's own background rather than
+ * into black, which is what keeps them from disappearing.
+ */
+export const OCEAN_COLOR = 0x0b1c2c;
+
+/**
  * Picks a country's colour deterministically from its ISO code, so the same
  * country is the same colour in every guild, render, and restart.
  */
@@ -26,14 +33,24 @@ export function countryColor(code: string): number {
 }
 
 /**
- * Darkens a colour towards black, used to render a conqueror's territories as
- * a dimmer shade of the empire's colour.
+ * Blends one colour towards another, channel by channel.
  *
- * @param factor 0 leaves the colour untouched, 1 makes it black.
+ * Territories are shaded with this rather than by scaling towards black.
+ * Scaling multiplies every channel, which drains a colour of the very thing
+ * that identifies its owner: a pale country turns muddy grey, and a dark one
+ * falls below the sea it is drawn on and vanishes. Blending towards the sea
+ * moves a colour along a line that ends at the map's own background, so the
+ * hue survives the whole way and the result can never be darker than the
+ * water around it.
+ *
+ * @param amount 0 leaves `from` untouched, 1 returns `to`.
  */
-export function dim(color: number, factor: number): number {
-  const clamp = Math.min(1, Math.max(0, factor));
-  const channel = (shift: number) =>
-    Math.round(((color >> shift) & 0xff) * (1 - clamp));
+export function blend(from: number, to: number, amount: number): number {
+  const clamp = Math.min(1, Math.max(0, amount));
+  const channel = (shift: number) => {
+    const start = (from >> shift) & 0xff;
+    const end = (to >> shift) & 0xff;
+    return Math.round(start + (end - start) * clamp);
+  };
   return (channel(16) << 16) | (channel(8) << 8) | channel(0);
 }

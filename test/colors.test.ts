@@ -1,6 +1,11 @@
 import {describe, expect, it} from 'vitest';
 import {COUNTRIES} from '../src/data/countries.js';
-import {COUNTRY_PALETTE, countryColor, dim} from '../src/game/colors.js';
+import {
+  COUNTRY_PALETTE,
+  OCEAN_COLOR,
+  blend,
+  countryColor,
+} from '../src/game/colors.js';
 
 describe('countryColor', () => {
   it('gives a country the same colour every time', () => {
@@ -20,21 +25,28 @@ describe('countryColor', () => {
   });
 });
 
-describe('dim', () => {
+describe('blend', () => {
   it('leaves a colour alone at zero', () => {
-    expect(dim(0x3cb44b, 0)).toBe(0x3cb44b);
+    expect(blend(0x3cb44b, OCEAN_COLOR, 0)).toBe(0x3cb44b);
   });
 
-  it('goes black at one', () => {
-    expect(dim(0x3cb44b, 1)).toBe(0x000000);
+  it('arrives at the target at one', () => {
+    expect(blend(0x3cb44b, OCEAN_COLOR, 1)).toBe(OCEAN_COLOR);
   });
 
-  it('darkens each channel proportionally', () => {
-    expect(dim(0xffffff, 0.5)).toBe(0x808080);
+  it('meets in the middle', () => {
+    expect(blend(0x000000, 0xffffff, 0.5)).toBe(0x808080);
   });
 
-  it('clamps factors outside the range', () => {
-    expect(dim(0xffffff, -1)).toBe(0xffffff);
-    expect(dim(0xffffff, 2)).toBe(0x000000);
+  it('clamps amounts outside the range', () => {
+    expect(blend(0xffffff, 0x000000, -1)).toBe(0xffffff);
+    expect(blend(0xffffff, 0x000000, 2)).toBe(0x000000);
+  });
+
+  it('moves a channel towards the target, not always downwards', () => {
+    // Scaling towards black could only ever darken; a blend has to be able to
+    // raise a channel the target is brighter in, which is what keeps a dark
+    // colour from sinking into the sea.
+    expect(blend(0x800000, OCEAN_COLOR, 0.4) & 0xff).toBeGreaterThan(0);
   });
 });
