@@ -8,11 +8,12 @@ import {
 } from '../src/db/countries.js';
 import type {CountryState} from '../src/db/countries.js';
 import {setCooldown, getCooldown} from '../src/db/cooldowns.js';
+import {getGuildConfig, upsertGuildConfig} from '../src/db/guild-config.js';
 import {
-  getGuildConfig,
-  setDominationThreshold,
-  upsertGuildConfig,
-} from '../src/db/guild-config.js';
+  forgetSettings,
+  setOverride,
+  settingsFor,
+} from '../src/db/guild-settings.js';
 import {openTestDatabase} from '../src/db/index.js';
 import {getInvasion} from '../src/db/invasions.js';
 import {getPlayer, joinCountry} from '../src/db/players.js';
@@ -50,6 +51,12 @@ function country(
     defenseImmunityUntil: null,
     ...overrides,
   };
+}
+
+/** Retunes the win condition, the way `/game tune` does. */
+function setThreshold(db: Database, guildId: string, value: number) {
+  setOverride(db, guildId, 'domination_threshold', value, NOW);
+  forgetSettings(guildId);
 }
 
 function world(codes = ['FR', 'DE', 'BE']): Database {
@@ -125,7 +132,7 @@ describe('checkVictory', () => {
   });
 
   it('declares a winner that reaches the territory threshold', () => {
-    setDominationThreshold(db, G, 2);
+    setThreshold(db, G, 2);
     conquer(db, 'DE', 'FR');
     conquer(db, 'BE', 'FR');
 
@@ -138,7 +145,7 @@ describe('checkVictory', () => {
   });
 
   it('does not declare one a territory short', () => {
-    setDominationThreshold(db, G, 3);
+    setThreshold(db, G, 3);
     conquer(db, 'DE', 'FR');
     conquer(db, 'BE', 'FR');
     expect(checkVictory(db, G, NOW)).toBeUndefined();
@@ -147,7 +154,7 @@ describe('checkVictory', () => {
   it('starts the clock when a country is left alone', () => {
     conquer(db, 'DE', 'FR');
     conquer(db, 'BE', 'FR');
-    setDominationThreshold(db, G, 99);
+    setThreshold(db, G, 99);
 
     expect(checkVictory(db, G, NOW + 1_000)).toBeUndefined();
     expect(getGuildConfig(db, G)).toMatchObject({
@@ -159,7 +166,7 @@ describe('checkVictory', () => {
   it('declares a walkover once it has stood alone long enough', () => {
     conquer(db, 'DE', 'FR');
     conquer(db, 'BE', 'FR');
-    setDominationThreshold(db, G, 99);
+    setThreshold(db, G, 99);
     checkVictory(db, G, NOW);
 
     expect(
@@ -178,7 +185,7 @@ describe('checkVictory', () => {
   it('restarts the clock from scratch when somebody else joins the world', () => {
     conquer(db, 'DE', 'FR');
     conquer(db, 'BE', 'FR');
-    setDominationThreshold(db, G, 99);
+    setThreshold(db, G, 99);
     checkVictory(db, G, NOW);
 
     // Somebody founds a country, so France is no longer alone.
@@ -205,7 +212,7 @@ describe('checkVictory', () => {
   });
 
   it('restarts the clock when the survivor is a different country', () => {
-    setDominationThreshold(db, G, 99);
+    setThreshold(db, G, 99);
     db.prepare(
       "UPDATE countries SET status = 'inactive' WHERE code IN ('DE', 'BE')",
     ).run();
@@ -231,7 +238,7 @@ describe('checkVictory', () => {
   });
 
   it('prefers domination when both could apply', () => {
-    setDominationThreshold(db, G, 2);
+    setThreshold(db, G, 2);
     conquer(db, 'DE', 'FR');
     conquer(db, 'BE', 'FR');
     checkVictory(db, G, NOW);
@@ -320,18 +327,19 @@ describe('resetGame', () => {
   });
 
   it('keeps the guild setup and its tuning, and starts a new round', () => {
-    setDominationThreshold(db, G, 4);
+    setThreshold(db, G, 4);
     resetGame(db, G, NOW + 100);
 
     expect(getGuildConfig(db, G)).toMatchObject({
       categoryId: 'cat',
       logChannelId: 'log',
-      dominationThreshold: 4,
       createdAt: NOW,
       roundStartedAt: NOW + 100,
       soleActiveCode: null,
       soleActiveSince: null,
     });
+    // A wiped round is still this server's game, tuned the way it chose.
+    expect(settingsFor(db, G).game.dominationThreshold).toBe(4);
   });
 
   it('leaves other guilds untouched', () => {

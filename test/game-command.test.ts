@@ -2,12 +2,18 @@ import {describe, expect, it} from 'vitest';
 import {InteractionContextType, PermissionFlagsBits} from 'discord.js';
 import type {ContainerBuilder} from 'discord.js';
 import {
-  MAX_THRESHOLD,
   RESET_CONFIRM_ID,
-  configCard,
+  formatSetting,
   gameCommand,
   resetConfirmationCard,
+  settingsCard,
+  tunedCard,
 } from '../src/commands/game.js';
+import {
+  TUNABLES,
+  TUNABLES_BY_KEY,
+  defaultSettings,
+} from '../src/config/settings.js';
 import {isResetConfirmation} from '../src/discord/game-buttons.js';
 
 function textOf(container: ContainerBuilder): string {
@@ -50,22 +56,31 @@ describe('/game registration', () => {
     expect(json.contexts).toEqual([InteractionContextType.Guild]);
   });
 
-  it('offers reset and config', () => {
+  it('offers reset, settings, tune, and reset-settings', () => {
     expect(json.options?.map(option => option.name).sort()).toEqual([
-      'config',
       'reset',
+      'reset-settings',
+      'settings',
+      'tune',
     ]);
   });
 
-  it('bounds the threshold to something a round can actually reach', () => {
-    const threshold = json.options
-      ?.find(option => option.name === 'config')
-      ?.options?.find(option => option.name === 'threshold');
-    expect(threshold).toMatchObject({
-      required: true,
-      min_value: 1,
-      max_value: MAX_THRESHOLD,
-    });
+  it('offers every tunable as a choice, and no others', () => {
+    const setting = json.options
+      ?.find(option => option.name === 'tune')
+      ?.options?.find(option => option.name === 'setting') as
+      {choices?: Array<{value: string}>; required?: boolean} | undefined;
+    expect(setting?.required).toBe(true);
+    expect(setting?.choices?.map(choice => choice.value).sort()).toEqual(
+      TUNABLES.map(tunable => tunable.key).sort(),
+    );
+  });
+
+  it('makes the value optional, so leaving it out restores the default', () => {
+    const value = json.options
+      ?.find(option => option.name === 'tune')
+      ?.options?.find(option => option.name === 'value');
+    expect(value?.required).toBeFalsy();
   });
 });
 
@@ -107,21 +122,76 @@ describe('isResetConfirmation', () => {
   });
 });
 
-describe('configCard', () => {
-  it('states the new threshold and who is closest to it', () => {
-    const text = textOf(
-      configCard({threshold: 6, leader: {code: 'FR', territories: 4}}),
+describe('formatSetting', () => {
+  it('reads durations as durations, not as raw minutes', () => {
+    const window = TUNABLES_BY_KEY.get('defense_window')!;
+    expect(formatSetting(window, 90)).toBe('1.5 hours');
+    expect(formatSetting(window, 30)).toBe('30 minutes');
+  });
+
+  it('says "none" for a timer somebody turned off', () => {
+    expect(formatSetting(TUNABLES_BY_KEY.get('rejoin_cooldown')!, 0)).toBe(
+      'none',
     );
-    expect(text).toContain('**6** territories');
-    expect(text).toContain('🇫🇷 France');
-    expect(text).toContain('**4**');
   });
 
-  it('copes with a world where nobody holds anything', () => {
-    expect(textOf(configCard({threshold: 6}))).toContain('Nobody holds');
+  it('marks percentages and counts for what they are', () => {
+    expect(formatSetting(TUNABLES_BY_KEY.get('home_advantage')!, 20)).toBe(
+      '20%',
+    );
+    expect(
+      formatSetting(TUNABLES_BY_KEY.get('domination_threshold')!, 10),
+    ).toBe('10');
+  });
+});
+
+describe('tunedCard', () => {
+  it('shows what a setting was and what it became', () => {
+    const text = textOf(
+      tunedCard({
+        tunable: TUNABLES_BY_KEY.get('war_tick')!,
+        value: 15,
+        previous: 60,
+      }),
+    );
+    expect(text).toContain('1 hour');
+    expect(text).toContain('15 minutes');
   });
 
-  it('mentions the other way to win', () => {
-    expect(textOf(configCard({threshold: 6}))).toContain('standing alone');
+  it('says that a war already running is not retuned underneath it', () => {
+    const text = textOf(
+      tunedCard({
+        tunable: TUNABLES_BY_KEY.get('war_tick')!,
+        value: 15,
+        previous: 60,
+      }),
+    );
+    expect(text).toContain('already running');
+  });
+});
+
+describe('settingsCard', () => {
+  const summaries = TUNABLES.map(tunable => ({
+    tunable,
+    value: tunable.read(defaultSettings()),
+    isDefault: true,
+  }));
+
+  it('lists every setting the server has', () => {
+    const text = textOf(settingsCard(summaries));
+    for (const tunable of TUNABLES) expect(text).toContain(tunable.label);
+  });
+
+  it('says plainly when nothing has been changed', () => {
+    expect(textOf(settingsCard(summaries))).toContain('as Conquest ships it');
+  });
+
+  it('marks what has been changed, and counts it', () => {
+    const changed = summaries.map((summary, index) =>
+      index === 0 ? {...summary, isDefault: false} : summary,
+    );
+    const text = textOf(settingsCard(changed));
+    expect(text).toContain('✏️');
+    expect(text).toContain('1 setting this server has changed');
   });
 });

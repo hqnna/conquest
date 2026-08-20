@@ -4,7 +4,9 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import type {ChatInputCommandInteraction, ContainerBuilder} from 'discord.js';
-import {RESOURCES, formatDuration} from '../config/constants.js';
+import {formatDuration} from '../config/constants.js';
+import type {Settings} from '../config/settings.js';
+import {settingsFor} from '../db/guild-settings.js';
 import {countryLabel, findCountry} from '../data/countries.js';
 import {GATHER_COMMANDS, listCooldowns} from '../db/cooldowns.js';
 import type {GatherCommand} from '../db/cooldowns.js';
@@ -12,7 +14,7 @@ import {getPlayer} from '../db/players.js';
 import {getStockpile} from '../db/resources.js';
 import type {Stockpile} from '../db/resources.js';
 import {ACCENT, container, relativeTime, v2EditReply} from '../discord/ui.js';
-import {GATHER_RULES} from '../game/gathering.js';
+import {gatherRules} from '../game/gathering.js';
 import {stockpileLine} from './gather.js';
 import type {Command, CommandContext} from './types.js';
 
@@ -39,9 +41,11 @@ export function resourcesCard(input: {
   code: string;
   stockpile: Stockpile;
   cooldowns: ReadonlyMap<GatherCommand, number>;
+  settings: Settings;
   now: number;
 }): ContainerBuilder {
   const country = findCountry(input.code);
+  const {recruitCost, recruitYield} = input.settings.resources;
   return container(
     ACCENT.neutral,
     `## ${country ? countryLabel(country) : input.code}`,
@@ -50,8 +54,10 @@ export function resourcesCard(input: {
       '**Your gather cooldowns**',
       ...cooldownLines(input.cooldowns, input.now),
     ].join('\n'),
-    `\`/recruit\` turns ${RESOURCES.recruitCost.gold} 🪙 gold and ${RESOURCES.recruitCost.food} 🌾 food into ` +
-      `${RESOURCES.recruitYield.min}–${RESOURCES.recruitYield.max} ⚔️ troops, every ${formatDuration(GATHER_RULES.recruit.cooldown)}.`,
+    `\`/recruit\` turns ${recruitCost.gold} 🪙 gold and ${recruitCost.food} 🌾 food into ` +
+      `${recruitYield.min}–${recruitYield.max} ⚔️ troops, every ${formatDuration(
+        gatherRules(input.settings).recruit.cooldown,
+      )}.`,
   );
 }
 
@@ -94,6 +100,7 @@ export const resourcesCommand: Command = {
           code: player.countryCode,
           stockpile,
           cooldowns: listCooldowns(ctx.db, guildId, interaction.user.id),
+          settings: settingsFor(ctx.db, guildId),
           now: Date.now(),
         }),
       ),

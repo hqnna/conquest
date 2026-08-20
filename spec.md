@@ -47,7 +47,7 @@ Three resource types, pooled at the **country level** (shared stockpile, since p
 
 - Cooldowns are per-player per-command, tracked as timestamps in the DB (survive restarts). Larger countries generate more, which self-balances since they are bigger targets.
 - `/resources` — show your country's stockpile and your own cooldown timers (ephemeral).
-- All numbers above (yields, costs, cooldowns) must live in a single config/constants module so admins/devs can tune them easily. Stretch goal: per-guild overrides via an admin command.
+- All numbers above (yields, costs, cooldowns) live in a single config/constants module. Per-guild overrides are stored in `guild_settings` and resolved into a `Settings` object that everything the game reads goes through; `/game tune`, `/game settings`, and `/game reset-settings` are the admin commands. The tunables are declared once in a registry that drives the command choices, the bounds checking, and how a stored value is applied.
 
 ---
 
@@ -125,7 +125,8 @@ An invasion is not settled in one roll. Once a defense takes the field, the two 
 | `/map` | Anyone | Rendered world-map image + legend in one V2 card; see Map rendering below |
 | `/country [name]` | Anyone | Details for one country (players, territories, protection/cooldown status; stockpile visible only to its own members) |
 | `/help [topic]` | Anyone | Paginated V2 help pages; see Help system below |
-| `/game reset` / `/game config` | Admin | Admin controls |
+| `/game reset` | Admin | Wipe the world and start a fresh round |
+| `/game settings` / `/game tune` / `/game reset-settings` | Admin | Per-server tuning |
 
 ---
 
@@ -186,7 +187,8 @@ Render a flat world map image showing the game state, attached to the `/map` rep
 
 ## Data model (SQLite)
 
-- `guild_config(guild_id PK, category_id, log_channel_id, domination_threshold, created_at, round_started_at, sole_active_code NULL, sole_active_since NULL)` — `round_started_at` is when the current round began (setup, or the last reset), so a victory can report how long it took.
+- `guild_config(guild_id PK, category_id, log_channel_id, created_at, round_started_at, sole_active_code NULL, sole_active_since NULL)`
+- `guild_settings(guild_id, key, value, set_at, PK (guild_id, key))` — one row per setting a guild has changed, holding the value in the unit an admin typed. Unknown keys and out-of-range values are ignored when resolving, so a tunable that was removed or narrowed cannot stop a guild's game working. — `round_started_at` is when the current round began (setup, or the last reset), so a victory can report how long it took.
 - `countries(guild_id, code PK w/ guild, name, status ENUM[inactive, active, defeated], owner_code NULL, channel_id NULL, role_id NULL, food, gold, troops, activated_at, protected_until, invade_cooldown_until, defense_immunity_until)` — defeated countries keep `channel_id` (the archive) but have `role_id` NULL after their role is deleted.
 - `players(guild_id, user_id PK w/ guild, country_code, joined_at, rejoin_cooldown_until)`
 - `gather_cooldowns(guild_id, user_id, command, next_available_at)`

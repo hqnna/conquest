@@ -2,10 +2,11 @@
  * Gathering: what `/farm`, `/mine`, and `/recruit` yield, when a player may
  * run them, and applying the result.
  */
-import {COOLDOWNS, RESOURCES} from '../config/constants.js';
+import type {Settings} from '../config/settings.js';
 import type {GatherCommand} from '../db/cooldowns.js';
 import {getCooldown, setCooldown} from '../db/cooldowns.js';
 import type {Database} from '../db/index.js';
+import {settingsFor} from '../db/guild-settings.js';
 import {addResources, getStockpile, spendResources} from '../db/resources.js';
 import type {ResourceDelta, Stockpile} from '../db/resources.js';
 
@@ -39,30 +40,34 @@ export interface GatherRules {
   yield: Range;
 }
 
-/** The rules for each gather command, all of them read from the tunables. */
-export const GATHER_RULES: Readonly<Record<GatherCommand, GatherRules>> = {
-  farm: {
-    cooldown: COOLDOWNS.farm,
-    cost: {},
-    produces: 'food',
-    yield: RESOURCES.farmYield,
-  },
-  mine: {
-    cooldown: COOLDOWNS.mine,
-    cost: {},
-    produces: 'gold',
-    yield: RESOURCES.mineYield,
-  },
-  recruit: {
-    cooldown: COOLDOWNS.recruit,
-    cost: {
-      gold: RESOURCES.recruitCost.gold,
-      food: RESOURCES.recruitCost.food,
+/** The rules for each gather command, as this guild has tuned them. */
+export function gatherRules(
+  settings: Settings,
+): Readonly<Record<GatherCommand, GatherRules>> {
+  return {
+    farm: {
+      cooldown: settings.cooldowns.farm,
+      cost: {},
+      produces: 'food',
+      yield: settings.resources.farmYield,
     },
-    produces: 'troops',
-    yield: RESOURCES.recruitYield,
-  },
-};
+    mine: {
+      cooldown: settings.cooldowns.mine,
+      cost: {},
+      produces: 'gold',
+      yield: settings.resources.mineYield,
+    },
+    recruit: {
+      cooldown: settings.cooldowns.recruit,
+      cost: {
+        gold: settings.resources.recruitCost.gold,
+        food: settings.resources.recruitCost.food,
+      },
+      produces: 'troops',
+      yield: settings.resources.recruitYield,
+    },
+  };
+}
 
 /** Why Conquest turned a gather command down. */
 export type GatherRefusal =
@@ -100,6 +105,7 @@ export function decideGather(input: {
   stockpile: Stockpile | undefined;
   command: GatherCommand;
   cooldownUntil: number | null;
+  settings: Settings;
   now: number;
 }): GatherDecision {
   if (!input.configured) return {ok: false, refusal: {kind: 'not_configured'}};
@@ -110,7 +116,10 @@ export function decideGather(input: {
     return {ok: false, refusal: {kind: 'cooldown', until: input.cooldownUntil}};
   }
 
-  const short = shortfall(input.stockpile, GATHER_RULES[input.command].cost);
+  const short = shortfall(
+    input.stockpile,
+    gatherRules(input.settings)[input.command].cost,
+  );
   if (Object.keys(short).length > 0) {
     return {ok: false, refusal: {kind: 'insufficient', short}};
   }
@@ -153,7 +162,7 @@ export function gather(
     random?: () => number;
   },
 ): {ok: true; result: GatherResult} | {ok: false; refusal: GatherRefusal} {
-  const rules = GATHER_RULES[input.command];
+  const rules = gatherRules(settingsFor(db, input.guildId))[input.command];
   const amount = rollYield(rules.yield, input.random);
 
   return db.transaction(() => {

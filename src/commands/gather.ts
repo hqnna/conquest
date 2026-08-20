@@ -4,7 +4,9 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import type {ChatInputCommandInteraction, ContainerBuilder} from 'discord.js';
-import {RESOURCES, formatDuration} from '../config/constants.js';
+import {formatDuration} from '../config/constants.js';
+import type {Settings} from '../config/settings.js';
+import {settingsFor} from '../db/guild-settings.js';
 import {countryLabel, findCountry} from '../data/countries.js';
 import type {GatherCommand} from '../db/cooldowns.js';
 import {getCooldown} from '../db/cooldowns.js';
@@ -13,7 +15,7 @@ import {getPlayer} from '../db/players.js';
 import {getStockpile} from '../db/resources.js';
 import type {ResourceDelta, Stockpile} from '../db/resources.js';
 import {ACCENT, container, relativeTime, v2EditReply} from '../discord/ui.js';
-import {GATHER_RULES, decideGather, gather} from '../game/gathering.js';
+import {decideGather, gather, gatherRules} from '../game/gathering.js';
 import type {GatherRefusal} from '../game/gathering.js';
 import type {Command, CommandContext} from './types.js';
 
@@ -42,7 +44,7 @@ const GATHER_COPY: Readonly<
       `Your mines yielded **${amount} ${RESOURCE_LABEL.gold}**.`,
   },
   recruit: {
-    description: `Turn ${RESOURCES.recruitCost.gold} gold and ${RESOURCES.recruitCost.food} food into troops`,
+    description: 'Turn gold and food into troops',
     flavour: amount =>
       `**${amount} ${RESOURCE_LABEL.troops}** answered the call.`,
   },
@@ -70,6 +72,7 @@ export function deltaLine(delta: ResourceDelta): string {
 export function gatherRefusalCard(
   refusal: GatherRefusal,
   command: GatherCommand,
+  settings: Settings,
 ): ContainerBuilder {
   switch (refusal.kind) {
     case 'not_configured':
@@ -95,7 +98,7 @@ export function gatherRefusalCard(
       return container(
         ACCENT.danger,
         '### Your country cannot afford that.',
-        `\`/recruit\` costs ${deltaLine(GATHER_RULES.recruit.cost)}, and you are short ${deltaLine(refusal.short)}.`,
+        `\`/recruit\` costs ${deltaLine(gatherRules(settings).recruit.cost)}, and you are short ${deltaLine(refusal.short)}.`,
         'Run `/farm` and `/mine` first, or wait for your countrymen to.',
       );
   }
@@ -104,7 +107,6 @@ export function gatherRefusalCard(
 /** Builds one of the three gather commands; they differ only in their copy. */
 function makeGatherCommand(command: GatherCommand): Command {
   const copy = GATHER_COPY[command];
-  const rules = GATHER_RULES[command];
 
   return {
     data: new SlashCommandBuilder()
@@ -122,6 +124,8 @@ function makeGatherCommand(command: GatherCommand): Command {
       await interaction.deferReply({flags: MessageFlags.Ephemeral});
 
       const now = Date.now();
+      const settings = settingsFor(ctx.db, guildId);
+      const rules = gatherRules(settings)[command];
       const player = getPlayer(ctx.db, guildId, interaction.user.id);
       const code = player?.countryCode ?? null;
       const decision = decideGather({
@@ -135,12 +139,13 @@ function makeGatherCommand(command: GatherCommand): Command {
           interaction.user.id,
           command,
         ),
+        settings,
         now,
       });
 
       if (!decision.ok) {
         await interaction.editReply(
-          v2EditReply(gatherRefusalCard(decision.refusal, command)),
+          v2EditReply(gatherRefusalCard(decision.refusal, command, settings)),
         );
         return;
       }
@@ -155,7 +160,7 @@ function makeGatherCommand(command: GatherCommand): Command {
 
       if (!outcome.ok) {
         await interaction.editReply(
-          v2EditReply(gatherRefusalCard(outcome.refusal, command)),
+          v2EditReply(gatherRefusalCard(outcome.refusal, command, settings)),
         );
         return;
       }

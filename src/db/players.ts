@@ -1,5 +1,5 @@
 import type {Database} from 'better-sqlite3';
-import {COOLDOWNS} from '../config/constants.js';
+import {settingsFor} from './guild-settings.js';
 
 /** A player's membership in this guild's game. */
 export interface PlayerState {
@@ -123,7 +123,9 @@ export function leaveCountry(
     withCooldown: boolean;
   },
 ): void {
-  const until = input.withCooldown ? input.now + COOLDOWNS.rejoin : null;
+  const until = input.withCooldown
+    ? input.now + settingsFor(db, input.guildId).cooldowns.rejoin
+    : null;
   db.prepare(
     `UPDATE players
         SET country_code = NULL, joined_at = NULL, rejoin_cooldown_until = ?

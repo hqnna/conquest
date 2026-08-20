@@ -6,7 +6,6 @@
  * checked from stored state on every sweep, so neither depends on a timer
  * surviving a restart.
  */
-import {GAME} from '../config/constants.js';
 import {
   listCountriesByStatus,
   listCountries,
@@ -14,6 +13,7 @@ import {
 } from '../db/countries.js';
 import type {CountryState} from '../db/countries.js';
 import {getGuildConfig, setSoleActive, startRound} from '../db/guild-config.js';
+import {settingsFor} from '../db/guild-settings.js';
 import type {Database} from '../db/index.js';
 import {clearCooldowns} from '../db/cooldowns.js';
 import {listCountryMembers} from '../db/players.js';
@@ -74,10 +74,11 @@ export function checkVictory(
   const active = listCountriesByStatus(db, guildId, 'active');
   const territories = territoryCounts(db, guildId);
 
+  const settings = settingsFor(db, guildId);
   const dominator = findDominator(
     active,
     territories,
-    config.dominationThreshold,
+    settings.game.dominationThreshold,
   );
   if (dominator) {
     return {
@@ -98,7 +99,10 @@ export function checkVictory(
     setSoleActive(db, guildId, alone, now);
     return undefined;
   }
-  if (now - config.soleActiveSince < GAME.lastCountryStandingDuration) {
+  if (
+    now - config.soleActiveSince <
+    settings.game.lastCountryStandingDuration
+  ) {
     return undefined;
   }
 

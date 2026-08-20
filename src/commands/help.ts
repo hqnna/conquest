@@ -7,7 +7,8 @@ import type {ChatInputCommandInteraction} from 'discord.js';
 import {HELP_TOPICS, TOPIC_LABELS, isHelpTopic} from '../help/topics.js';
 import {helpCard} from '../discord/help-ui.js';
 import {v2EditReply} from '../discord/ui.js';
-import type {Command} from './types.js';
+import {settingsFor} from '../db/guild-settings.js';
+import type {Command, CommandContext} from './types.js';
 
 export const helpCommand: Command = {
   data: new SlashCommandBuilder()
@@ -28,18 +29,25 @@ export const helpCommand: Command = {
         ),
     ),
 
-  // Help needs no game state: every number it prints comes from the tunables.
-  async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+  async execute(
+    interaction: ChatInputCommandInteraction,
+    ctx: CommandContext,
+  ): Promise<void> {
     // Help is personal and would only clutter a channel.
     await interaction.deferReply({flags: MessageFlags.Ephemeral});
 
     const requested = interaction.options.getString('topic');
+    // Help documents the game as this server actually plays it.
+    const settings = interaction.guildId
+      ? settingsFor(ctx.db, interaction.guildId)
+      : undefined;
     await interaction.editReply(
       v2EditReply(
         helpCard(
           requested && isHelpTopic(requested)
             ? {topic: requested, page: 0}
             : {page: 0},
+          settings,
         ),
       ),
     );

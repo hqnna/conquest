@@ -28,7 +28,9 @@ flow, map rendering, and the `/help` system.
 | `/reinforce troops:<n> [gold] [food]` | Player | Send fresh forces to a war your country is losing |
 | `/surrender` | Player | Give up a war your country cannot continue |
 | `/game reset` | Admin | Wipe the world and start a fresh round (confirmed) |
-| `/game config threshold:<n>` | Admin | Change how much territory wins the round |
+| `/game settings` | Admin | Show every setting, and what this server changed |
+| `/game tune setting:<s> [value]` | Admin | Retune one setting, or restore its default |
+| `/game reset-settings` | Admin | Put every setting back to the shipped default |
 | `/map [region]` | Anyone | The rendered world map, with the standings as its legend |
 | `/help [topic]` | Anyone | Paginated help, with its numbers read from the tunables |
 
@@ -189,7 +191,10 @@ run `/setup` again — players simply `/join` a fresh world.
 - **Role-based permissions.** A country is a role plus a private channel; there
   are no per-user channel overwrites.
 - **One tunables module.** `src/config/constants.ts` holds every yield, cost,
-  cooldown, window, and threshold, and `/help` renders its numbers from it.
+  cooldown, window, and threshold Conquest ships with, and a guild may override
+  any of them. Everything the game reads goes through settings resolved for
+  that guild, and `/help` renders its numbers from the same place — so the
+  help documents the game each server actually plays.
 - **Autocomplete is UX, not validation.** It answers from the database and
   cache alone, and every command decides again server-side.
 - **Stateless components.** Vote buttons encode the invasion, side, and choice
@@ -200,6 +205,34 @@ run `/setup` again — players simply `/join` a fresh world.
   corrupt game.
 - **Components V2 everywhere.** Every Conquest message is built from containers,
   never legacy embeds.
+
+## Per-server settings
+
+Every server plays the shipped game until an admin changes something:
+
+```
+/game settings                       # what this server plays, and what it changed
+/game tune setting:"Defence window" value:90
+/game tune setting:"Defence window"  # no value restores the default
+/game reset-settings                 # restore everything
+```
+
+Sixteen settings are tunable — gather and recruit cooldowns, recruit cost,
+rejoin and invasion cooldowns, the vote and defence windows, protections, the
+war round interval and reinforcement window, the per-round loss rate, home
+advantage, the supply cap, and both win conditions. Values are given in the
+units an admin thinks in — minutes, percent, or a count — and stored that way,
+so what comes back out is what somebody asked for.
+
+The tunables are declared once, in `src/config/settings.ts`. That one registry
+drives the command's choices, its bounds checking, what `/game settings` prints,
+and how a stored value is applied, so a new tunable cannot be half-added. The
+bounds are not decoration: a zero-length war round would spin and a defence
+window of seconds would make an invasion unanswerable.
+
+Changes apply from the next command. Deadlines already running keep the value
+they started with, so a war in progress is never retuned underneath the
+countries fighting it.
 
 ## License
 

@@ -13,6 +13,7 @@ import {
   voteCustomId,
   warReportCard,
 } from '../src/discord/invasion-ui.js';
+import {defaultSettings} from '../src/config/settings.js';
 import {fightRound} from '../src/game/resolution.js';
 import type {ConclusionReport, RoundReport} from '../src/game/invasions.js';
 
@@ -185,7 +186,7 @@ describe('declarationCard', () => {
 
 describe('roundReportCard', () => {
   function round(attack: Stake, defense: Stake, rounds = 3): RoundReport {
-    const tick = fightRound(attack, defense, () => 0.5);
+    const tick = fightRound(attack, defense, defaultSettings(), () => 0.5);
     return {
       invasion: invasion({
         attack,

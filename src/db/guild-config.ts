@@ -1,5 +1,4 @@
 import type {Database} from 'better-sqlite3';
-import {GAME} from '../config/constants.js';
 
 /** Per-guild setup, written by `/setup` and `/game config`. */
 export interface GuildConfig {
@@ -8,8 +7,6 @@ export interface GuildConfig {
   categoryId: string;
   /** Public channel Conquest posts global events to. */
   logChannelId: string;
-  /** Territories a country needs to win the round. */
-  dominationThreshold: number;
   /** When `/setup` first ran for this guild. */
   createdAt: number;
   /** When the current round began: setup, or the last reset. */
@@ -24,7 +21,6 @@ interface GuildConfigRow {
   guild_id: string;
   category_id: string;
   log_channel_id: string;
-  domination_threshold: number;
   created_at: number;
   round_started_at: number | null;
   sole_active_code: string | null;
@@ -36,7 +32,6 @@ function toGuildConfig(row: GuildConfigRow): GuildConfig {
     guildId: row.guild_id,
     categoryId: row.category_id,
     logChannelId: row.log_channel_id,
-    dominationThreshold: row.domination_threshold,
     createdAt: row.created_at,
     roundStartedAt: row.round_started_at ?? row.created_at,
     soleActiveCode: row.sole_active_code,
@@ -73,38 +68,14 @@ export function upsertGuildConfig(
   const now = input.now ?? Date.now();
   db.prepare(
     `INSERT INTO guild_config
-       (guild_id, category_id, log_channel_id, domination_threshold, created_at,
-        round_started_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+       (guild_id, category_id, log_channel_id, created_at, round_started_at)
+     VALUES (?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        category_id = excluded.category_id,
        log_channel_id = excluded.log_channel_id`,
-  ).run(
-    input.guildId,
-    input.categoryId,
-    input.logChannelId,
-    GAME.defaultDominationThreshold,
-    now,
-    now,
-  );
+  ).run(input.guildId, input.categoryId, input.logChannelId, now, now);
   // The row is guaranteed to exist immediately after the upsert.
   return getGuildConfig(db, input.guildId)!;
-}
-
-/** Sets the number of territories needed to win in this guild. */
-export function setDominationThreshold(
-  db: Database,
-  guildId: string,
-  threshold: number,
-): void {
-  const result = db
-    .prepare(
-      'UPDATE guild_config SET domination_threshold = ? WHERE guild_id = ?',
-    )
-    .run(threshold, guildId);
-  if (result.changes === 0) {
-    throw new Error(`No Conquest configuration for guild ${guildId}`);
-  }
 }
 
 /** Every guild that has run `/setup`, for the sweeper's global passes. */

@@ -1,5 +1,5 @@
 import type {Database} from 'better-sqlite3';
-import {INVASIONS} from '../config/constants.js';
+import {settingsFor} from './guild-settings.js';
 
 /** Lifecycle of a country within one guild's game. */
 export type CountryStatus = 'inactive' | 'active' | 'defeated';
@@ -155,7 +155,8 @@ export function activateCountry(
     now: number;
   },
 ): CountryState {
-  const protectedUntil = input.now + INVASIONS.newCountryProtection;
+  const protectedUntil =
+    input.now + settingsFor(db, input.guildId).invasions.newCountryProtection;
   db.prepare(
     `INSERT INTO countries
        (guild_id, code, name, status, owner_code, channel_id, role_id,

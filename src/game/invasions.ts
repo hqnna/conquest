@@ -8,7 +8,7 @@
  * Discord work happens after the transaction commits, driven by what it
  * returns.
  */
-import {COOLDOWNS, INVASIONS, WAR} from '../config/constants.js';
+import {settingsFor} from '../db/guild-settings.js';
 import {
   getCountry,
   listTerritories,
@@ -189,7 +189,8 @@ export function declareInvasion(
       attackerCode: input.attackerCode,
       defenderCode: input.defenderCode,
       attack: input.stake,
-      attackVoteDeadline: input.now + INVASIONS.attackVoteWindow,
+      attackVoteDeadline:
+        input.now + settingsFor(db, input.guildId).invasions.attackVoteWindow,
       now: input.now,
     });
     return {ok: true as const, invasion};
@@ -240,7 +241,8 @@ export function escrowAndOpenDefense(
       'UPDATE countries SET protected_until = NULL WHERE guild_id = ? AND code = ?',
     ).run(invasion.guildId, invasion.attackerCode);
 
-    const defenseDeadline = now + INVASIONS.defenseWindow;
+    const defenseDeadline =
+      now + settingsFor(db, invasion.guildId).invasions.defenseWindow;
     openDefenseWindow(db, invasion.id, invasion.attack, defenseDeadline);
     return {ok: true as const, defenseDeadline};
   })();
@@ -324,7 +326,7 @@ export function proposeDefense(
       proposerId: input.proposerId,
       stake: input.stake,
       voteDeadline: Math.min(
-        input.now + INVASIONS.attackVoteWindow,
+        input.now + settingsFor(db, input.guildId).invasions.attackVoteWindow,
         invasion.defenseDeadline,
       ),
       now: input.now,
@@ -400,8 +402,9 @@ export function proposeReinforcement(
       proposerId: input.proposerId,
       stake: input.stake,
       voteDeadline: Math.min(
-        input.now + WAR.reinforcementWindow,
-        invasion.reinforceDeadline ?? input.now + WAR.reinforcementWindow,
+        input.now + settingsFor(db, input.guildId).war.reinforcementWindow,
+        invasion.reinforceDeadline ??
+          input.now + settingsFor(db, input.guildId).war.reinforcementWindow,
       ),
       now: input.now,
     });
@@ -443,7 +446,8 @@ export function escrowDefense(
       };
     }
     finishProposal(db, proposal.id, 'approved', now);
-    const firstTickAt = now + WAR.tickInterval;
+    const firstTickAt =
+      now + settingsFor(db, invasion.guildId).war.tickInterval;
     beginWar(db, invasion.id, proposal.stake, firstTickAt);
     return {ok: true as const, firstTickAt};
   })();
@@ -477,7 +481,7 @@ export function escrowReinforcement(
       };
     }
     finishProposal(db, proposal.id, 'approved', now);
-    const nextTickAt = now + WAR.tickInterval;
+    const nextTickAt = now + settingsFor(db, invasion.guildId).war.tickInterval;
     applyReinforcement(
       db,
       invasion.id,
@@ -522,14 +526,20 @@ export function fightWarRound(
   now: number,
   random: () => number = Math.random,
 ): RoundReport {
-  const tick = fightRound(invasion.attackField, invasion.defenseField, random);
+  const settings = settingsFor(db, invasion.guildId);
+  const tick = fightRound(
+    invasion.attackField,
+    invasion.defenseField,
+    settings,
+    random,
+  );
 
   return db.transaction(() => {
     recordRound(
       db,
       invasion.id,
       {attack: tick.attackerRemaining, defense: tick.defenderRemaining},
-      now + WAR.tickInterval,
+      now + settings.war.tickInterval,
     );
 
     const spentSide: Side | null = tick.attackerSpent
@@ -543,7 +553,7 @@ export function fightWarRound(
         db,
         invasion.id,
         spentSide,
-        now + WAR.reinforcementWindow,
+        now + settings.war.reinforcementWindow,
       );
     }
 
@@ -615,18 +625,23 @@ export function concludeWar(
 ): ConclusionReport {
   return db.transaction(() => {
     const {guildId, attackerCode, defenderCode} = invasion;
+    const settings = settingsFor(db, guildId);
 
     // Whoever wins, the attacker cannot march again for a while.
     db.prepare(
       'UPDATE countries SET invade_cooldown_until = ? WHERE guild_id = ? AND code = ?',
-    ).run(now + COOLDOWNS.invade, guildId, attackerCode);
+    ).run(now + settings.cooldowns.invade, guildId, attackerCode);
 
     if (winner === 'defender') {
       addResources(db, guildId, attackerCode, invasion.attackField);
       addResources(db, guildId, defenderCode, invasion.defenseField);
       db.prepare(
         'UPDATE countries SET defense_immunity_until = ? WHERE guild_id = ? AND code = ?',
-      ).run(now + INVASIONS.successfulDefenseImmunity, guildId, defenderCode);
+      ).run(
+        now + settings.invasions.successfulDefenseImmunity,
+        guildId,
+        defenderCode,
+      );
       finishInvasion(db, invasion.id, 'resolved_defender_win', now);
       return {
         invasion,

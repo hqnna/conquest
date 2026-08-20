@@ -4,10 +4,9 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import type {ChatInputCommandInteraction, ContainerBuilder} from 'discord.js';
-import {GAME} from '../config/constants.js';
 import {countryLabel, findCountry} from '../data/countries.js';
 import {listCountriesByStatus, territoryCounts} from '../db/countries.js';
-import {getGuildConfig} from '../db/guild-config.js';
+import {settingsFor} from '../db/guild-settings.js';
 import {memberCounts} from '../db/players.js';
 import {mapEditReply, withMapImage} from '../discord/map-message.js';
 import {ACCENT, container, v2EditReply} from '../discord/ui.js';
@@ -103,7 +102,6 @@ export const mapCommand: Command = {
 
     await interaction.deferReply({flags: MessageFlags.Ephemeral});
 
-    const config = getGuildConfig(ctx.db, guildId);
     const region = interaction.options.getString('region') ?? undefined;
     const entries = standings(
       listCountriesByStatus(ctx.db, guildId, 'active').map(state => state.code),
@@ -112,7 +110,7 @@ export const mapCommand: Command = {
     );
     const card = worldCard(
       entries,
-      config?.dominationThreshold ?? GAME.defaultDominationThreshold,
+      settingsFor(ctx.db, guildId).game.dominationThreshold,
     );
 
     // Without a rasterizer the standings stand alone, which is exactly what

@@ -14,6 +14,8 @@ import {
   StringSelectMenuOptionBuilder,
 } from 'discord.js';
 import type {ContainerBuilder} from 'discord.js';
+import {defaultSettings} from '../config/settings.js';
+import type {Settings} from '../config/settings.js';
 import {
   HELP_TOPICS,
   TOPIC_LABELS,
@@ -108,7 +110,10 @@ function pageButtons(
  * Long topics are paginated rather than truncated, so nothing is ever cut
  * off — a reader can always reach the rest.
  */
-export function helpCard(location: HelpLocation): ContainerBuilder {
+export function helpCard(
+  location: HelpLocation,
+  settings: Settings = defaultSettings(),
+): ContainerBuilder {
   if (!location.topic) {
     const page = indexPage();
     const card = container(
@@ -120,7 +125,7 @@ export function helpCard(location: HelpLocation): ContainerBuilder {
     return card;
   }
 
-  const pages = pagesFor(location.topic);
+  const pages = pagesFor(location.topic, settings);
   const index = clampPage(location.topic, location.page);
   const page = pages[index];
 

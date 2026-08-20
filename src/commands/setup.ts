@@ -16,6 +16,7 @@ import type {
 } from 'discord.js';
 import {CHANNELS, DISCORD_LIMITS, GAME} from '../config/constants.js';
 import {getGuildConfig, upsertGuildConfig} from '../db/guild-config.js';
+import {settingsFor} from '../db/guild-settings.js';
 import {
   ACCENT,
   container,
@@ -212,11 +213,12 @@ export const setupCommand: Command = {
       });
     }
 
-    const config = upsertGuildConfig(ctx.db, {
+    upsertGuildConfig(ctx.db, {
       guildId: guild.id,
       categoryId: resolved.id,
       logChannelId: logChannel.id,
     });
+    const settings = settingsFor(ctx.db, guild.id);
 
     const warning =
       preexisting > 0
@@ -248,7 +250,7 @@ export const setupCommand: Command = {
           [
             `**Country channels:** ${resolved}`,
             `**Game log:** ${logChannel}${logChannelCreated ? ' (created)' : ' (reused)'} — read-only, pinned to the top of the category`,
-            `**Domination threshold:** ${config.dominationThreshold} territories`,
+            `**Domination threshold:** ${settings.game.dominationThreshold} territories`,
             `**Country slots left:** ${remainingCategorySlots(resolved)} of ${DISCORD_LIMITS.channelsPerCategory} (the game log takes one)`,
           ].join('\n'),
           warning,

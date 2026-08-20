@@ -82,7 +82,7 @@ export function registerInteractionHandler(
       if (!interaction.guild) return;
       try {
         if (isHelpComponent(interaction.customId)) {
-          await handleHelpButton(interaction);
+          await handleHelpButton(ctx.db, interaction);
         } else if (isResetConfirmation(interaction.customId)) {
           await handleResetButton(ctx.db, interaction.guild, interaction);
         } else {
@@ -106,7 +106,7 @@ export function registerInteractionHandler(
 
     if (interaction.isStringSelectMenu()) {
       try {
-        await handleHelpSelect(interaction);
+        await handleHelpSelect(ctx.db, interaction);
       } catch (error) {
         console.error(`Select ${interaction.customId} failed:`, error);
       }

@@ -9,7 +9,7 @@
  * Everything here is pure, with randomness injected, so a whole war can be
  * replayed exactly in a test.
  */
-import {INVASIONS, WAR} from '../config/constants.js';
+import type {Settings} from '../config/settings.js';
 import type {Stake} from '../db/invasions.js';
 
 /** Nothing committed at all. */
@@ -22,11 +22,12 @@ export const NO_STAKE: Stake = {troops: 0, gold: 0, food: 0};
  * at one supply per troop; past that they add nothing while still being lost
  * to the fighting, so overpacking is pure risk.
  */
-export function supplyBonus(stake: Stake): number {
+export function supplyBonus(stake: Stake, settings: Settings): number {
   if (stake.troops <= 0) return 0;
   const supplies = stake.gold + stake.food;
-  const ratio = supplies / (INVASIONS.supplyRatioDivisor * stake.troops);
-  return Math.min(ratio, INVASIONS.maxSupplyBonus);
+  const ratio =
+    supplies / (settings.invasions.supplyRatioDivisor * stake.troops);
+  return Math.min(ratio, settings.invasions.maxSupplyBonus);
 }
 
 /**
@@ -34,8 +35,11 @@ export function supplyBonus(stake: Stake): number {
  *
  * @param random injected so tests can pin a war.
  */
-export function rollLuck(random: () => number = Math.random): number {
-  const {min, max} = INVASIONS.luckRange;
+export function rollLuck(
+  settings: Settings,
+  random: () => number = Math.random,
+): number {
+  const {min, max} = settings.invasions.luckRange;
   return min + random() * (max - min);
 }
 
@@ -45,9 +49,13 @@ export function rollLuck(random: () => number = Math.random): number {
  * A side with no troops has no power, whatever it packed: supplies do not
  * fight, they only make troops fight harder.
  */
-export function power(stake: Stake, homeAdvantage = 1): number {
+export function power(
+  stake: Stake,
+  settings: Settings,
+  homeAdvantage = 1,
+): number {
   if (stake.troops <= 0) return 0;
-  return stake.troops * (1 + supplyBonus(stake)) * homeAdvantage;
+  return stake.troops * (1 + supplyBonus(stake, settings)) * homeAdvantage;
 }
 
 /**
@@ -58,11 +66,16 @@ export function power(stake: Stake, homeAdvantage = 1): number {
  * stronger side pays half. The range is clamped at both ends, so no tick is
  * instantly fatal and no war grinds on forever.
  */
-export function lossRate(ownPower: number, enemyPower: number): number {
+export function lossRate(
+  ownPower: number,
+  enemyPower: number,
+  settings: Settings,
+): number {
+  const {baseLossRate, lossRateRange} = settings.war;
   if (enemyPower <= 0) return 0;
-  if (ownPower <= 0) return WAR.lossRateRange.max;
-  const rate = WAR.baseLossRate * (enemyPower / ownPower);
-  return Math.min(WAR.lossRateRange.max, Math.max(WAR.lossRateRange.min, rate));
+  if (ownPower <= 0) return lossRateRange.max;
+  const rate = baseLossRate * (enemyPower / ownPower);
+  return Math.min(lossRateRange.max, Math.max(lossRateRange.min, rate));
 }
 
 /**
@@ -121,23 +134,28 @@ export interface WarTick {
 export function fightRound(
   attack: Stake,
   defense: Stake,
+  settings: Settings,
   random: () => number = Math.random,
 ): WarTick {
-  const attackPower = power(attack);
-  const defensePower = power(defense, INVASIONS.homeAdvantage);
+  const attackPower = power(attack, settings);
+  const defensePower = power(
+    defense,
+    settings,
+    settings.invasions.homeAdvantage,
+  );
 
-  const attackerRate = lossRate(attackPower, defensePower);
-  const defenderRate = lossRate(defensePower, attackPower);
+  const attackerRate = lossRate(attackPower, defensePower, settings);
+  const defenderRate = lossRate(defensePower, attackPower, settings);
 
   const attacker = applyLosses(attack, attackerRate, {
-    troops: rollLuck(random),
-    gold: rollLuck(random),
-    food: rollLuck(random),
+    troops: rollLuck(settings, random),
+    gold: rollLuck(settings, random),
+    food: rollLuck(settings, random),
   });
   const defender = applyLosses(defense, defenderRate, {
-    troops: rollLuck(random),
-    gold: rollLuck(random),
-    food: rollLuck(random),
+    troops: rollLuck(settings, random),
+    gold: rollLuck(settings, random),
+    food: rollLuck(settings, random),
   });
 
   return {

@@ -1,11 +1,9 @@
 import {beforeEach, describe, expect, it} from 'vitest';
 import type {Database} from 'better-sqlite3';
-import {GAME} from '../src/config/constants.js';
 import {openTestDatabase} from '../src/db/index.js';
 import {
   deleteGuildConfig,
   getGuildConfig,
-  setDominationThreshold,
   upsertGuildConfig,
 } from '../src/db/guild-config.js';
 
@@ -32,7 +30,6 @@ describe('guild config', () => {
       guildId: 'guild-1',
       categoryId: 'cat-1',
       logChannelId: 'log-1',
-      dominationThreshold: GAME.defaultDominationThreshold,
       createdAt: 1_000,
       roundStartedAt: 1_000,
       soleActiveCode: null,
@@ -41,14 +38,13 @@ describe('guild config', () => {
     expect(getGuildConfig(db, 'guild-1')).toEqual(config);
   });
 
-  it('re-running setup repoints the category without resetting tuning', () => {
+  it('re-running setup repoints the category without restarting the round', () => {
     upsertGuildConfig(db, {
       guildId: 'guild-1',
       categoryId: 'cat-1',
       logChannelId: 'log-1',
       now: 1_000,
     });
-    setDominationThreshold(db, 'guild-1', 3);
 
     const updated = upsertGuildConfig(db, {
       guildId: 'guild-1',
@@ -59,8 +55,8 @@ describe('guild config', () => {
 
     expect(updated.categoryId).toBe('cat-2');
     expect(updated.logChannelId).toBe('log-2');
-    expect(updated.dominationThreshold).toBe(3);
     expect(updated.createdAt).toBe(1_000);
+    expect(updated.roundStartedAt).toBe(1_000);
   });
 
   it('keeps guilds isolated from each other', () => {
@@ -74,19 +70,9 @@ describe('guild config', () => {
       categoryId: 'cat-2',
       logChannelId: 'log-2',
     });
-    setDominationThreshold(db, 'guild-2', 4);
 
     expect(getGuildConfig(db, 'guild-1')?.categoryId).toBe('cat-1');
-    expect(getGuildConfig(db, 'guild-1')?.dominationThreshold).toBe(
-      GAME.defaultDominationThreshold,
-    );
-    expect(getGuildConfig(db, 'guild-2')?.dominationThreshold).toBe(4);
-  });
-
-  it('refuses to set a threshold for an unconfigured guild', () => {
-    expect(() => setDominationThreshold(db, 'guild-x', 5)).toThrow(
-      /No Conquest configuration/,
-    );
+    expect(getGuildConfig(db, 'guild-2')?.categoryId).toBe('cat-2');
   });
 
   it('deletes only the named guild', () => {

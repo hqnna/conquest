@@ -7,6 +7,7 @@ import {
 } from '../src/commands/gather.js';
 import {cooldownLines, resourcesCard} from '../src/commands/resources.js';
 import {RESOURCES} from '../src/config/constants.js';
+import {defaultSettings} from '../src/config/settings.js';
 import type {GatherCommand} from '../src/db/cooldowns.js';
 
 const NOW = 1_700_000_000_000;
@@ -48,19 +49,27 @@ describe('deltaLine', () => {
 describe('gatherRefusalCard', () => {
   it('points an unconfigured server at /setup', () => {
     expect(
-      textOf(gatherRefusalCard({kind: 'not_configured'}, 'farm')),
+      textOf(
+        gatherRefusalCard({kind: 'not_configured'}, 'farm', defaultSettings()),
+      ),
     ).toContain('/setup');
   });
 
   it('points a countryless player at /join', () => {
     expect(
-      textOf(gatherRefusalCard({kind: 'not_in_country'}, 'farm')),
+      textOf(
+        gatherRefusalCard({kind: 'not_in_country'}, 'farm', defaultSettings()),
+      ),
     ).toContain('/join');
   });
 
   it('says when the player may go again', () => {
     const text = textOf(
-      gatherRefusalCard({kind: 'cooldown', until: NOW + 1_000}, 'mine'),
+      gatherRefusalCard(
+        {kind: 'cooldown', until: NOW + 1_000},
+        'mine',
+        defaultSettings(),
+      ),
     );
     expect(text).toContain('/mine');
     expect(text).toMatch(/<t:\d+:R>/);
@@ -68,7 +77,11 @@ describe('gatherRefusalCard', () => {
 
   it('says exactly what a country is short and how to fix it', () => {
     const text = textOf(
-      gatherRefusalCard({kind: 'insufficient', short: {gold: 6}}, 'recruit'),
+      gatherRefusalCard(
+        {kind: 'insufficient', short: {gold: 6}},
+        'recruit',
+        defaultSettings(),
+      ),
     );
     expect(text).toContain('short 6 🪙 gold');
     expect(text).toContain('/farm');
@@ -102,6 +115,7 @@ describe('resourcesCard', () => {
         code: 'FR',
         stockpile: {food: 12, gold: 34, troops: 56},
         cooldowns: new Map([['farm', NOW + 1_000]]),
+        settings: defaultSettings(),
         now: NOW,
       }),
     );

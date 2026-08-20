@@ -1,21 +1,26 @@
 import {beforeEach, describe, expect, it} from 'vitest';
 import type {Database} from 'better-sqlite3';
 import {COOLDOWNS, RESOURCES} from '../src/config/constants.js';
+import {defaultSettings} from '../src/config/settings.js';
 import {activateCountry} from '../src/db/countries.js';
 import {getCooldown, setCooldown} from '../src/db/cooldowns.js';
 import {openTestDatabase} from '../src/db/index.js';
 import {addResources, getStockpile} from '../src/db/resources.js';
 import type {Stockpile} from '../src/db/resources.js';
 import {
-  GATHER_RULES,
   decideGather,
   gather,
+  gatherRules,
   rollYield,
   shortfall,
 } from '../src/game/gathering.js';
 
 const NOW = 1_700_000_000_000;
 const EMPTY: Stockpile = {food: 0, gold: 0, troops: 0};
+
+/** A guild that has changed nothing, so the shipped numbers apply. */
+const settings = defaultSettings();
+const GATHER_RULES = gatherRules(settings);
 
 function setup(): Database {
   const db = openTestDatabase();
@@ -78,6 +83,7 @@ describe('decideGather', () => {
     stockpile: EMPTY,
     command: 'farm' as const,
     cooldownUntil: null,
+    settings,
     now: NOW,
   };
 
@@ -296,7 +302,7 @@ describe('gather', () => {
 });
 
 describe('gather rules', () => {
-  it('read their numbers from the tunables', () => {
+  it('read their numbers from the settings', () => {
     expect(GATHER_RULES.farm.cooldown).toBe(COOLDOWNS.farm);
     expect(GATHER_RULES.mine.cooldown).toBe(COOLDOWNS.mine);
     expect(GATHER_RULES.recruit.cooldown).toBe(COOLDOWNS.recruit);
