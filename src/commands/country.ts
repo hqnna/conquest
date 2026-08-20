@@ -18,18 +18,21 @@ import {
 import type {CountryData} from '../data/countries.js';
 import {getCountry, listCountries, listTerritories} from '../db/countries.js';
 import type {CountryState} from '../db/countries.js';
-import {getPendingInvasionFor} from '../db/invasions.js';
+import {listPendingInvasionsFor} from '../db/invasions.js';
 import type {Invasion} from '../db/invasions.js';
+import {getPendingMergeFor} from '../db/merges.js';
+import type {Merge} from '../db/merges.js';
 import {getPlayer, listCountryMembers} from '../db/players.js';
 import {ACCENT, container, relativeTime, v2EditReply} from '../discord/ui.js';
 import type {Command, CommandContext} from './types.js';
 
 /**
- * Describes the war a country is caught up in, if any.
+ * Describes one of the wars a country is caught up in.
  *
  * A war is public: which countries are fighting, and how far along it is, is
  * exactly what an onlooker needs to judge who is worth attacking. What each
- * side actually committed stays between them.
+ * side actually committed stays between them. A country may be in several at
+ * once, so these are listed one per line.
  */
 export function warLine(code: string, invasion: Invasion): string {
   const attacking = invasion.attackerCode === code;
@@ -59,6 +62,31 @@ export function warLine(code: string, invasion: Invasion): string {
     default:
       return `⚔️ At war with ${them}`;
   }
+}
+
+/**
+ * Describes a merge the country is deciding on.
+ *
+ * Which countries are talking is public — the offer is a thing the world can
+ * react to, and an ally about to be swallowed is worth knowing about — but who
+ * has voted which way stays inside the two channels.
+ */
+export function mergeLine(code: string, merge: Merge): string {
+  const them = findCountry(
+    merge.fromCode === code ? merge.intoCode : merge.fromCode,
+  );
+  const other = them ? countryLabel(them) : '?';
+  const offering = merge.fromCode === code;
+
+  if (merge.status === 'offer_vote') {
+    return offering
+      ? `🤝 Voting on whether to join ${other} — closes ${relativeTime(merge.offerDeadline)}`
+      : `🤝 ${other} is voting on whether to offer itself to them`;
+  }
+  const deadline = relativeTime(merge.acceptDeadline ?? merge.offerDeadline);
+  return offering
+    ? `🤝 Offered itself to ${other}, who must answer by ${deadline}`
+    : `🤝 Deciding whether to take ${other} in by ${deadline}`;
 }
 
 /** Renders the timers that decide whether a country can fight right now. */
@@ -94,8 +122,10 @@ export function countryCard(input: {
   members: string[];
   territories: CountryState[];
   viewerIsMember: boolean;
-  /** The war it is caught up in, if any. */
-  invasion?: Invasion;
+  /** Every war it is caught up in, on either side. */
+  invasions?: readonly Invasion[];
+  /** The merge it is deciding on, if any. */
+  merge?: Merge;
   now: number;
 }): ContainerBuilder {
   const {country, state, members, territories} = input;
@@ -138,13 +168,15 @@ export function countryCard(input: {
     }),
   ];
 
+  const wars = input.invasions ?? [];
   const timers = [
-    ...(input.invasion ? [warLine(country.code, input.invasion)] : []),
+    ...wars.map(invasion => warLine(country.code, invasion)),
+    ...(input.merge ? [mergeLine(country.code, input.merge)] : []),
     ...statusLines(state, input.now),
   ];
 
   return container(
-    input.invasion ? ACCENT.warning : ACCENT.neutral,
+    wars.length > 0 ? ACCENT.warning : ACCENT.neutral,
     `## ${countryLabel(country)}`,
     [
       `**Players (${members.length}):** ${roster}`,
@@ -238,7 +270,8 @@ export const countryCommand: Command = {
           members: listCountryMembers(ctx.db, guild.id, country.code),
           territories: listTerritories(ctx.db, guild.id, country.code),
           viewerIsMember: player?.countryCode === country.code,
-          invasion: getPendingInvasionFor(ctx.db, guild.id, country.code),
+          invasions: listPendingInvasionsFor(ctx.db, guild.id, country.code),
+          merge: getPendingMergeFor(ctx.db, guild.id, country.code),
           now: Date.now(),
         }),
       ),

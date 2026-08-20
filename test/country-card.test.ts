@@ -1,9 +1,10 @@
 import {describe, expect, it} from 'vitest';
 import type {ContainerBuilder} from 'discord.js';
-import {countryCard, warLine} from '../src/commands/country.js';
+import {countryCard, mergeLine, warLine} from '../src/commands/country.js';
 import {findCountry} from '../src/data/countries.js';
 import type {CountryState} from '../src/db/countries.js';
 import type {Invasion} from '../src/db/invasions.js';
+import type {Merge} from '../src/db/merges.js';
 
 const NOW = 1_700_000_000_000;
 const FRANCE = findCountry('FR')!;
@@ -24,6 +25,30 @@ function state(overrides: Partial<CountryState> = {}): CountryState {
     protectedUntil: null,
     invadeCooldownUntil: null,
     defenseImmunityUntil: null,
+    ...overrides,
+  };
+}
+
+function war(overrides: Partial<Invasion> = {}): Invasion {
+  return {
+    id: 1,
+    guildId: 'g1',
+    attackerCode: 'FR',
+    defenderCode: 'DE',
+    attack: {troops: 20, gold: 0, food: 0},
+    defense: null,
+    attackField: {troops: 20, gold: 0, food: 0},
+    defenseField: {troops: 0, gold: 0, food: 0},
+    status: 'war',
+    attackVoteDeadline: NOW,
+    defenseDeadline: NOW + 1_000,
+    nextTickAt: NOW + 100,
+    reinforcingSide: null,
+    reinforceDeadline: null,
+    rounds: 2,
+    attackMessageId: null,
+    createdAt: NOW,
+    resolvedAt: null,
     ...overrides,
   };
 }
@@ -177,32 +202,72 @@ describe('warLine', () => {
 
 describe('countryCard at war', () => {
   it('leads with the war a country is fighting', () => {
+    const text = card({invasions: [war({status: 'war', rounds: 2})]});
+    expect(text).toContain('At war with 🇩🇪 Germany');
+  });
+
+  it('lists every war at once, because a country may fight several', () => {
     const text = card({
-      invasion: {
-        id: 1,
-        guildId: 'g1',
-        attackerCode: 'FR',
-        defenderCode: 'DE',
-        attack: {troops: 20, gold: 0, food: 0},
-        defense: null,
-        attackField: {troops: 20, gold: 0, food: 0},
-        defenseField: {troops: 0, gold: 0, food: 0},
-        status: 'war',
-        attackVoteDeadline: NOW,
-        defenseDeadline: NOW + 1_000,
-        nextTickAt: NOW + 100,
-        reinforcingSide: null,
-        reinforceDeadline: null,
-        rounds: 2,
-        attackMessageId: null,
-        createdAt: NOW,
-        resolvedAt: null,
-      },
+      invasions: [
+        war({status: 'war', rounds: 2}),
+        war({
+          id: 2,
+          attackerCode: 'BE',
+          defenderCode: 'FR',
+          status: 'defense_window',
+        }),
+      ],
     });
     expect(text).toContain('At war with 🇩🇪 Germany');
+    expect(text).toContain('Invaded by 🇧🇪 Belgium');
   });
 
   it('says nothing about a war when there is none', () => {
     expect(card()).not.toContain('At war');
+  });
+});
+
+describe('countryCard while merging', () => {
+  function offer(overrides: Partial<Merge> = {}): Merge {
+    return {
+      id: 1,
+      guildId: 'g1',
+      fromCode: 'FR',
+      intoCode: 'DE',
+      proposerId: 'u1',
+      status: 'offer_vote',
+      offerDeadline: NOW + 1_000,
+      acceptDeadline: null,
+      offerMessageId: null,
+      acceptMessageId: null,
+      createdAt: NOW,
+      resolvedAt: null,
+      ...overrides,
+    };
+  }
+
+  it('shows the country deciding whether to give itself away', () => {
+    expect(card({merge: offer()})).toContain(
+      'Voting on whether to join 🇩🇪 Germany',
+    );
+  });
+
+  it('shows an offer waiting on the other country', () => {
+    const text = card({
+      merge: offer({status: 'accept_vote', acceptDeadline: NOW + 5_000}),
+    });
+    expect(text).toContain('Offered itself to 🇩🇪 Germany');
+  });
+
+  it('reads from the receiving side too', () => {
+    const text = mergeLine(
+      'DE',
+      offer({status: 'accept_vote', acceptDeadline: NOW + 5_000}),
+    );
+    expect(text).toContain('Deciding whether to take 🇫🇷 France in');
+  });
+
+  it('says nothing about a merge when there is none', () => {
+    expect(card()).not.toContain('🤝');
   });
 });

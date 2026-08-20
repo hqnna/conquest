@@ -21,7 +21,7 @@ import {
 } from '../data/countries.js';
 import {getCountry, listCountriesByStatus} from '../db/countries.js';
 import {getGuildConfig} from '../db/guild-config.js';
-import {getPendingInvasionFor} from '../db/invasions.js';
+import {listPendingInvasionsFor} from '../db/invasions.js';
 import type {Stake} from '../db/invasions.js';
 import {getPlayer} from '../db/players.js';
 import type {Stockpile} from '../db/resources.js';
@@ -62,7 +62,13 @@ export function stakeSuggestions(
   return suggestions;
 }
 
-/** Countries this country could legally march on right now. */
+/**
+ * Countries this country could legally march on right now.
+ *
+ * A country already at war is a legal target — coming to somebody's aid by
+ * striking their invader is the whole point of allowing it. What is excluded
+ * is a country this one is already invading, since that war is running.
+ */
 export function legalTargets(input: {
   attackerCode: string;
   active: ReadonlyArray<{
@@ -70,12 +76,13 @@ export function legalTargets(input: {
     protectedUntil: number | null;
     defenseImmunityUntil: number | null;
   }>;
-  busyCodes: ReadonlySet<string>;
+  /** Countries this attacker already has a war against. */
+  engagedCodes: ReadonlySet<string>;
   now: number;
 }): string[] {
   return input.active
     .filter(country => country.code !== input.attackerCode)
-    .filter(country => !input.busyCodes.has(country.code))
+    .filter(country => !input.engagedCodes.has(country.code))
     .filter(
       country =>
         !(country.protectedUntil && country.protectedUntil > input.now),
@@ -174,17 +181,12 @@ export function invadeRefusalCard(
         '### That country just fought off an invasion.',
         `It is immune until ${relativeTime(refusal.until)}. Let someone else soften it up.`,
       );
-    case 'attacker_busy':
+    case 'already_invading':
       return container(
         ACCENT.warning,
-        '### Your country is already in a war.',
-        'A country fights one invasion at a time, attacking or defending. See it through first.',
-      );
-    case 'target_busy':
-      return container(
-        ACCENT.warning,
-        '### That country is already in a war.',
-        'Wait for it to resolve — it may be weaker afterwards, or much stronger.',
+        '### You are already marching on them.',
+        'One war per enemy: see that one through, or reinforce it, before declaring another. ' +
+          'You may still declare on somebody else.',
       );
   }
 }
@@ -267,14 +269,14 @@ export const invadeCommand: Command = {
 
     const now = Date.now();
     const active = listCountriesByStatus(ctx.db, guildId, 'active');
-    const busy = new Set<string>();
-    for (const country of active) {
-      const pending = getPendingInvasionFor(ctx.db, guildId, country.code);
-      if (pending) busy.add(country.code);
-    }
+    const engaged = new Set(
+      listPendingInvasionsFor(ctx.db, guildId, code)
+        .filter(invasion => invasion.attackerCode === code)
+        .map(invasion => invasion.defenderCode),
+    );
 
     const targets = new Set(
-      legalTargets({attackerCode: code, active, busyCodes: busy, now}),
+      legalTargets({attackerCode: code, active, engagedCodes: engaged, now}),
     );
     const matches = searchCountries(
       COUNTRIES.filter(country => targets.has(country.code)),

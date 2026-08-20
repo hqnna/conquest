@@ -20,8 +20,9 @@ import {
   finishInvasion,
   finishProposal,
   getInvasion,
-  getPendingInvasionFor,
+  getPendingInvasionBetween,
   getPendingProposal,
+  listPendingInvasionsFor,
   openDefenseWindow,
   openReinforcement,
   recordRound,
@@ -54,8 +55,7 @@ export type InvadeRefusal =
   | {kind: 'on_cooldown'; until: number}
   | {kind: 'target_protected'; until: number}
   | {kind: 'target_immune'; until: number}
-  | {kind: 'attacker_busy'; invasionId: number}
-  | {kind: 'target_busy'; invasionId: number};
+  | {kind: 'already_invading'; invasionId: number};
 
 /** Whether a declaration may be put to the country. */
 export type InvadeDecision = {ok: true} | {ok: false; refusal: InvadeRefusal};
@@ -72,6 +72,12 @@ export function canAfford(stockpile: Stockpile, stake: Stake): boolean {
 /**
  * Decides whether an invasion may be declared.
  *
+ * A country may fight several wars at once, on either side. That is what makes
+ * a promise of protection worth anything: a country can strike an invader
+ * while it is busy invading somebody else, and a country already under attack
+ * can be piled on by a second enemy. What is still forbidden is declaring
+ * twice on the same target, which would be two wars over one country.
+ *
  * Autocomplete offers only legal targets, but a player can always type
  * something else, so every rule is checked again here.
  */
@@ -81,8 +87,8 @@ export function decideInvade(input: {
   defender: CountryState | undefined;
   defenderKnown: boolean;
   stake: Stake;
-  attackerPending: Invasion | undefined;
-  defenderPending: Invasion | undefined;
+  /** A war this attacker is already fighting against this same target. */
+  existing: Invasion | undefined;
   now: number;
 }): InvadeDecision {
   const {attacker, defender, stake, now} = input;
@@ -115,16 +121,10 @@ export function decideInvade(input: {
       refusal: {kind: 'on_cooldown', until: attacker.invadeCooldownUntil},
     };
   }
-  if (input.attackerPending) {
+  if (input.existing) {
     return {
       ok: false,
-      refusal: {kind: 'attacker_busy', invasionId: input.attackerPending.id},
-    };
-  }
-  if (input.defenderPending) {
-    return {
-      ok: false,
-      refusal: {kind: 'target_busy', invasionId: input.defenderPending.id},
+      refusal: {kind: 'already_invading', invasionId: input.existing.id},
     };
   }
   if (defender.protectedUntil && defender.protectedUntil > now) {
@@ -168,14 +168,10 @@ export function declareInvasion(
       defender,
       defenderKnown: true,
       stake: input.stake,
-      attackerPending: getPendingInvasionFor(
+      existing: getPendingInvasionBetween(
         db,
         input.guildId,
         input.attackerCode,
-      ),
-      defenderPending: getPendingInvasionFor(
-        db,
-        input.guildId,
         input.defenderCode,
       ),
       now: input.now,
@@ -269,15 +265,20 @@ export type DefendRefusal =
 /**
  * Puts the opening defence to the defending country.
  *
- * Only one proposal may be pending at a time; a rejected one may be replaced
- * while the window lasts. The vote is capped by the defence deadline, since a
- * vote that ends after the invader has already walked in decides nothing.
+ * The war is named by the caller, because a country may be under attack by
+ * more than one enemy at a time and each invasion is answered on its own.
+ *
+ * Only one proposal may be pending per invasion; a rejected one may be
+ * replaced while the window lasts. The vote is capped by the defence deadline,
+ * since a vote that ends after the invader has already walked in decides
+ * nothing.
  */
 export function proposeDefense(
   db: Database,
   input: {
     guildId: string;
     code: string;
+    invasionId: number;
     proposerId: string;
     stake: Stake;
     now: number;
@@ -286,8 +287,12 @@ export function proposeDefense(
   | {ok: true; invasion: Invasion; proposal: StakeProposal}
   | {ok: false; refusal: DefendRefusal} {
   return db.transaction(() => {
-    const invasion = getPendingInvasionFor(db, input.guildId, input.code);
-    if (!invasion || invasion.defenderCode !== input.code) {
+    const invasion = getInvasion(db, input.invasionId);
+    if (
+      !invasion ||
+      invasion.guildId !== input.guildId ||
+      invasion.defenderCode !== input.code
+    ) {
       return {ok: false as const, refusal: {kind: 'not_under_attack' as const}};
     }
     if (invasion.status !== 'defense_window' || !invasion.defenseDeadline) {
@@ -348,13 +353,15 @@ export function proposeDefense(
  *
  * Only the side being asked may propose, and only while it is being asked:
  * this is the answer to "reinforce or give up", not a way to pour troops into
- * a war at any moment.
+ * a war at any moment. The war is named by the caller, since a country may be
+ * fighting several and only one of them is asking.
  */
 export function proposeReinforcement(
   db: Database,
   input: {
     guildId: string;
     code: string;
+    invasionId: number;
     proposerId: string;
     stake: Stake;
     now: number;
@@ -363,8 +370,13 @@ export function proposeReinforcement(
   | {ok: true; invasion: Invasion; proposal: StakeProposal}
   | {ok: false; refusal: DefendRefusal} {
   return db.transaction(() => {
-    const invasion = getPendingInvasionFor(db, input.guildId, input.code);
-    if (!invasion) {
+    const invasion = getInvasion(db, input.invasionId);
+    if (
+      !invasion ||
+      invasion.guildId !== input.guildId ||
+      (invasion.attackerCode !== input.code &&
+        invasion.defenderCode !== input.code)
+    ) {
       return {ok: false as const, refusal: {kind: 'not_under_attack' as const}};
     }
     const side: Side =
@@ -604,6 +616,11 @@ export interface ConclusionReport {
   transferredPlayers: string[];
   /** Countries that changed hands, the defender included. */
   capturedTerritories: CountryState[];
+  /**
+   * The fallen country's other wars, called off because it no longer exists.
+   * Each side's surviving force was handed back before the looting.
+   */
+  cancelledWars: Invasion[];
   /** The defeated country's role, which must now be deleted. */
   defeatedRoleId: string | null;
   /** The defeated country's channel, which becomes a read-only archive. */
@@ -620,6 +637,12 @@ export interface ConclusionReport {
  * along with its country, its stockpile, its people, and its territory. An
  * attacker that gives up simply marches what is left of its army home — it
  * loses the war, not its army.
+ *
+ * A country that falls while fighting elsewhere has those wars called off
+ * first, and every side's surviving force handed back, before the looting.
+ * The fallen country has no home left to march to, so its armies abroad land
+ * in a stockpile that is emptied a moment later — the victor captures them.
+ * Its other enemies simply get their own forces back: they were not beaten.
  *
  * The whole settlement is one transaction. A half-applied conquest would be a
  * corrupt game.
@@ -661,6 +684,7 @@ export function concludeWar(
         loot: null,
         transferredPlayers: [],
         capturedTerritories: [],
+        cancelledWars: [],
         defeatedRoleId: null,
         defeatedChannelId: null,
         winnerRoleId: getCountry(db, guildId, defenderCode)?.roleId ?? null,
@@ -674,6 +698,16 @@ export function concludeWar(
     // is carried off with everything else.
     addResources(db, guildId, attackerCode, invasion.attackField);
     addResources(db, guildId, attackerCode, invasion.defenseField);
+
+    // Every other war the fallen country was fighting ends with it. Both
+    // sides get their surviving force back first, which puts the fallen
+    // country's armies abroad into a stockpile the victor is about to take.
+    const cancelledWars = listPendingInvasionsFor(db, guildId, defenderCode)
+      .filter(other => other.id !== invasion.id)
+      .map(other => {
+        releaseInvasion(db, other, now);
+        return other;
+      });
 
     const loot = lootStockpile(db, guildId, defenderCode, attackerCode);
     const transferredPlayers = transferPlayers(db, {
@@ -712,11 +746,39 @@ export function concludeWar(
         getCountry(db, guildId, defenderCode)!,
         ...inherited,
       ],
+      cancelledWars,
       defeatedRoleId: defeated.roleId,
       defeatedChannelId: defeated.channelId,
       winnerRoleId: victor.roleId,
     };
   })();
+}
+
+/**
+ * Calls one war off and hands back everything that was escrowed, without a
+ * transaction of its own — for callers that are already inside one.
+ *
+ * Nothing has left the stockpile yet while an attack vote is still running,
+ * so there is nothing to give back in that state.
+ */
+function releaseInvasion(db: Database, invasion: Invasion, now: number): void {
+  if (invasion.status !== 'attack_vote') {
+    addResources(
+      db,
+      invasion.guildId,
+      invasion.attackerCode,
+      invasion.attackField,
+    );
+    addResources(
+      db,
+      invasion.guildId,
+      invasion.defenderCode,
+      invasion.defenseField,
+    );
+  }
+  const pending = getPendingProposal(db, invasion.id);
+  if (pending) finishProposal(db, pending.id, 'expired', now);
+  finishInvasion(db, invasion.id, 'cancelled', now);
 }
 
 /**
@@ -730,25 +792,7 @@ export function cancelInvasion(
   invasion: Invasion,
   now: number,
 ): void {
-  db.transaction(() => {
-    if (invasion.status !== 'attack_vote') {
-      addResources(
-        db,
-        invasion.guildId,
-        invasion.attackerCode,
-        invasion.attackField,
-      );
-      addResources(
-        db,
-        invasion.guildId,
-        invasion.defenderCode,
-        invasion.defenseField,
-      );
-    }
-    const pending = getPendingProposal(db, invasion.id);
-    if (pending) finishProposal(db, pending.id, 'expired', now);
-    finishInvasion(db, invasion.id, 'cancelled', now);
-  })();
+  db.transaction(() => releaseInvasion(db, invasion, now))();
 }
 
 /** Players in a country right now, for reading a vote against its size. */

@@ -518,6 +518,7 @@ export async function endWar(
     return;
   }
 
+  await reportCollapsedWars(db, guild, invasion, report);
   await applyConquest(db, guild, invasion, report);
   await postWorldMap(
     db,
@@ -526,6 +527,55 @@ export async function endWar(
     'The world after the conquest',
     map,
   );
+}
+
+/**
+ * Tells the world about the wars that ended with the country that was fighting
+ * them.
+ *
+ * The other side gets its surviving force back and is told so in its own
+ * channel: from where they are standing a war simply stopped, and the reason
+ * is that somebody else finished it.
+ */
+async function reportCollapsedWars(
+  db: Database,
+  guild: Guild,
+  invasion: Invasion,
+  report: ConclusionReport,
+): Promise<void> {
+  for (const war of report.cancelledWars) {
+    const other =
+      war.attackerCode === invasion.defenderCode
+        ? war.defenderCode
+        : war.attackerCode;
+    const theirs =
+      war.attackerCode === other ? war.attackField : war.defenseField;
+
+    await announce(
+      db,
+      guild,
+      container(
+        ACCENT.neutral,
+        `## The war between ${countryName(war.attackerCode)} and ${countryName(war.defenderCode)} is over before it was decided`,
+        `${countryName(invasion.defenderCode)} fell to ${countryName(invasion.attackerCode)} while it was still being fought.`,
+        `${countryName(other)} has its surviving force back. Everything ${countryName(invasion.defenderCode)} had in the field was captured with the rest of it.`,
+      ),
+    );
+
+    const channel = await channelOf(db, guild, other);
+    await channel
+      ?.send(
+        v2Message(
+          container(
+            ACCENT.warning,
+            `## Your war with ${countryName(invasion.defenderCode)} is over`,
+            `${countryName(invasion.attackerCode)} got there first — ${countryName(invasion.defenderCode)} is theirs now.`,
+            `Your army is home: ${stakeLine(theirs)}.`,
+          ),
+        ),
+      )
+      .catch(() => undefined);
+  }
 }
 
 /** The Discord half of a conquest: roles moved, channels archived. */

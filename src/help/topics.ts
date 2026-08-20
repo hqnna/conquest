@@ -160,6 +160,10 @@ function buildPages(
             `**The defender is told at once**, and has ${formatDuration(invasions.defenseWindow)} to answer with \`/defend\`.`,
             '**Ignoring an invasion loses it.** A country that never answers is absorbed without a fight — and the attacker’s army comes home untouched.',
           ].join('\n'),
+          [
+            '**You can be in more than one war.** Attack somebody who is already fighting, gang up on a target with a friend, or march back on your own invader — all of it is allowed. Only a second declaration on the same country is refused.',
+            'While you are in several, add `enemy:<country>` to `/defend`, `/reinforce`, and `/surrender` to say which war you mean.',
+          ].join('\n'),
           'The next page covers what happens when they do fight back.',
         ],
       },
@@ -192,6 +196,10 @@ function buildPages(
             '• its players join the winner',
             '• its territories change hands, including everything it had taken',
             '• its channel becomes a read-only archive the conquerors can read',
+          ].join('\n'),
+          [
+            '**A country that falls loses every war it was fighting.** Those wars are called off, and each side gets its surviving force back.',
+            'For the fallen country that is no rescue: it has no home left, so an army it had abroad comes back into a stockpile the victor takes with everything else. Striking an enemy who is busy invading somebody else can win you their whole expedition.',
           ].join('\n'),
           [
             `**Afterwards.** The attacker cannot declare again for ${formatDuration(cooldowns.invade)}, win or lose.`,
@@ -236,7 +244,9 @@ function buildPages(
             'If you were the last player, your country is disbanded and everything it held is released.',
           ].join('\n'),
           [
-            '**One war at a time.** A country fights one invasion at a time, attacking or defending. It cannot be attacked by two countries at once, and cannot open a second front of its own.',
+            '**Wars can overlap.** A country can fight several at once, attacking and defending at the same time, and two countries can pile on the same target. The only thing you cannot do is declare twice on the same country.',
+            'That is what makes an alliance mean something: if somebody invades a country you promised to protect, you can march on the invader while their army is already committed.',
+            '`/defend`, `/reinforce`, and `/surrender` take `enemy:<country>` to say which war you mean — you only need it once you are in more than one.',
             `**Protections.** A new country cannot be invaded for ${formatDuration(invasions.newCountryProtection)}, but attacking anybody gives that up immediately.`,
           ].join('\n'),
           [

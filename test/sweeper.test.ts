@@ -91,6 +91,7 @@ function atWar(db: Database, attack = stake(20), defense = stake(15)) {
   const proposed = proposeDefense(db, {
     guildId: G,
     code: 'DE',
+    invasionId: invasion.id,
     proposerId: 'd1',
     stake: defense,
     now: NOW,
@@ -158,10 +159,11 @@ describe('what the sweeper finds', () => {
   });
 
   it('finds defence proposals whose window ran out', () => {
-    inFlight(db);
+    const invasion = inFlight(db);
     const proposed = proposeDefense(db, {
       guildId: G,
       code: 'DE',
+      invasionId: invasion.id,
       proposerId: 'd1',
       stake: stake(10),
       now: NOW,
@@ -181,6 +183,7 @@ describe('what the sweeper finds', () => {
     const proposed = proposeDefense(db, {
       guildId: G,
       code: 'DE',
+      invasionId: invasion.id,
       proposerId: 'd1',
       stake: stake(10),
       now: NOW,
@@ -318,6 +321,7 @@ describe('pipeline invariants', () => {
     const proposed = proposeDefense(db, {
       guildId: G,
       code: 'DE',
+      invasionId: invasion.id,
       proposerId: 'd1',
       stake: stake(10),
       now: NOW,

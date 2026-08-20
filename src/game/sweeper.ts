@@ -109,9 +109,11 @@ export async function sweep(
   }
 
   // A defender that never answered is absorbed without a fight.
-  for (const invasion of listUnansweredInvasions(db, now)) {
-    const guild = await guildOf(client, invasion.guildId);
+  for (const unanswered of listUnansweredInvasions(db, now)) {
+    const guild = await guildOf(client, unanswered.guildId);
     if (!guild) continue;
+    const invasion = getInvasion(db, unanswered.id);
+    if (invasion?.status !== 'defense_window') continue;
     try {
       await endWar(db, guild, invasion, 'attacker', 'unanswered', now, map);
       warsUnanswered++;
@@ -120,9 +122,13 @@ export async function sweep(
     }
   }
 
-  for (const invasion of listWarsDueATick(db, now)) {
-    const guild = await guildOf(client, invasion.guildId);
+  for (const due of listWarsDueATick(db, now)) {
+    const guild = await guildOf(client, due.guildId);
     if (!guild) continue;
+    // A country falling in one war calls off its others, so what was due a
+    // round at the top of this sweep may already be settled.
+    const invasion = getInvasion(db, due.id);
+    if (invasion?.status !== 'war') continue;
     try {
       await fightRoundAndReport(db, guild, invasion, now);
       roundsFought++;
@@ -133,9 +139,11 @@ export async function sweep(
 
   // Silence is surrender: a country that never approved reinforcements has
   // given up, and the other side has won.
-  for (const invasion of listExpiredReinforcements(db, now)) {
-    const guild = await guildOf(client, invasion.guildId);
+  for (const expired of listExpiredReinforcements(db, now)) {
+    const guild = await guildOf(client, expired.guildId);
     if (!guild) continue;
+    const invasion = getInvasion(db, expired.id);
+    if (invasion?.status !== 'reinforcing') continue;
     try {
       await endWar(
         db,

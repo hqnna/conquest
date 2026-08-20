@@ -56,7 +56,7 @@ Three resource types, pooled at the **country level** (shared stockpile, since p
 
 ### Declaring (attacker side)
 1. Any player runs `/invade country:<target> troops:<amount> [gold:<amount>] [food:<amount>]`. The attacker chooses their **stake**: troops are mandatory (minimum 1), gold and food are optional supplies.
-   - Validations: caller is in an active country; target is active, not the caller's own country, and not defeated; attacker stockpile covers the full stake; attacker country is not on invasion cooldown; neither country is already involved in a pending invasion; target is not under new-country protection.
+   - Validations: caller is in an active country; target is active, not the caller's own country, and not defeated; attacker stockpile covers the full stake; attacker country is not on invasion cooldown; the attacker does not already have a pending invasion **against that same target**; target is not under new-country protection.
 2. This opens an **attack vote** in the attacker's country channel: a Components V2 vote message (see UI & message design) showing target and the full committed stake, with Approve/Reject buttons.
    - Threshold: strict majority of the country's current player count. A 1-player country passes with their own single vote (the initiator's `/invade` counts as their Approve).
    - Window: 6 hours. If majority approval isn't reached in time, the vote fails and nothing is spent.
@@ -141,9 +141,9 @@ A country may also be given away rather than taken. `/merge country:<target>` pu
 | `/farm`, `/mine`, `/recruit` | Player | Gather resources (per-player cooldowns) |
 | `/resources` | Player | Show country stockpile + own cooldowns (ephemeral) |
 | `/invade country:<t> troops:<n> [gold] [food]` | Player | Start attack vote with a multi-resource stake |
-| `/defend troops:<n> [gold] [food]` | Player (under invasion) | Start defense vote with a multi-resource stake |
-| `/reinforce troops:<n> [gold] [food]` | Player (force spent) | Vote to send fresh forces and continue the war |
-| `/surrender` | Player (force spent) | Give up the war immediately |
+| `/defend troops:<n> [gold] [food] [enemy]` | Player (under invasion) | Start defense vote with a multi-resource stake; `enemy` names the war when there is more than one |
+| `/reinforce troops:<n> [gold] [food] [enemy]` | Player (force spent) | Vote to send fresh forces and continue the war |
+| `/surrender [enemy]` | Player (force spent) | Give up that war immediately |
 | `/merge country:<t>` | Player | Offer your country to another one; both countries vote |
 | `/map` | Anyone | Rendered world-map image + legend in one V2 card; see Map rendering below |
 | `/country [name]` | Anyone | Details for one country (players, territories, protection/cooldown status; stockpile visible only to its own members) |
@@ -237,7 +237,10 @@ All state-mutating operations (escrow, resolution, transfers) must be wrapped in
 
 - **Restart safety:** on boot, reload all pending invasions/votes and re-register button collectors (or handle button interactions statelessly by parsing `customId` like `vote:<invasionId>:<kind>:<choice>` and validating against the DB — prefer this stateless approach).
 - **Member leaves guild:** treat as `/leave` without cooldown; recalculate any pending vote thresholds; if country hits 0 players mid-invasion, cancel the invasion and refund the other side's escrow.
-- **Concurrency:** a country may be involved in at most one invasion at a time (as attacker or defender). Reject overlapping declarations.
+- **Concurrency:** a country may be involved in **several invasions at once**, on either side. It can be attacked by two countries at the same time, attack while being attacked, and march back on its own invader. Each invasion has its own escrow, its own defence, its own rounds, and its own end; nothing is shared between them but the stockpile they are all paid out of. The only declaration rejected for overlapping is a second one by the same attacker against the same defender.
+  - This is deliberate, and it is what makes diplomacy in the war room load-bearing: a country can promise to protect another, and make good on it by striking the invader while its army is committed elsewhere.
+  - Because a country can be in several, `/defend`, `/reinforce`, and `/surrender` take an `enemy:<country>` option naming the war. Omitted, it resolves to the only war the command applies to; with several it is refused with a list rather than guessed. Autocomplete offers only the wars that command applies to (invasions still awaiting a defence; wars where this country is the side being asked to reinforce).
+  - **A country that falls loses its other wars.** In the same transaction as the conquest, every other pending invasion involving the fallen country is cancelled and both sides' field forces are returned — then the looting happens. The fallen country has no home to march to, so its armies abroad are captured with the rest of its stockpile; its other enemies simply get their own forces back, having not been beaten. The sweeper therefore re-reads an invasion's status before acting on it, since another war may have settled it mid-sweep.
 - **Permissions failures:** if the bot lacks channel-management or **Manage Roles** permissions, fail loudly with an actionable error message. Validate both during `/setup`. Country roles must sit below the bot's highest role in the hierarchy (they will, since the bot creates them).
 - **Rate limits:** channel creation/edits, role creation/deletion, and especially **bulk role assignment during a conquest transfer** (every defeated player gets the winner's role) should be queued/serialized to respect Discord rate limits; a large transfer may take a minute — post a progress/"transfer complete" message.
 - **Announcements:** every state change that affects more than one country goes to the game log channel; country-internal events (votes, gather results) stay in country channels or ephemeral replies.

@@ -272,6 +272,7 @@ describe('warReportCard', () => {
       }),
       winner,
       reason,
+      cancelledWars: [],
       attackerReturns: stake(5),
       defenderReturns: winner === 'defender' ? stake(8) : stake(0),
       captured: winner === 'attacker' ? stake(3, 2, 2) : stake(0),

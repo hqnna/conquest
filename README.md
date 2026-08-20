@@ -149,7 +149,8 @@ than failing.
 2. On a majority the stake is escrowed immediately, the war is declared in the
    game log with the stake in full, and the defender's channel is pinged.
    Marching voids the attacker's own new-country protection.
-3. The defender has a window to `/defend`. **Ignoring an invasion loses it**:
+3. The defender has a window to `/defend` (naming the invader with `enemy:` if
+   it is fighting more than one). **Ignoring an invasion loses it**:
    if nothing is approved in time the country is absorbed without a fight, and
    the attacker's army comes home untouched.
 4. If a defence does take the field, the two forces grind each other down over
@@ -163,6 +164,26 @@ than failing.
    not its army. A defender that gives up loses everything: its surviving
    force, its stockpile, its players, its territories, and its channel, which
    becomes a read-only archive its conquerors can read.
+
+**Countries can fight several wars at once.** Two countries can pile onto one
+target, a country can attack while being attacked, and an invaded country can
+march straight back on its invader. The only declaration refused for overlap is
+a second one against the same country. This is what gives the war room teeth:
+promise to protect somebody, and you can make good on it by striking their
+invader while that army is already committed elsewhere.
+
+Because of that, `/defend`, `/reinforce`, and `/surrender` take
+`enemy:<country>` to say which war they mean. You only need it once you are in
+more than one — with a single war they resolve to it, and with several they
+refuse and list them rather than guessing.
+
+**A country that falls loses every war it was fighting.** Those wars are called
+off in the same transaction as the conquest, and each side's surviving force is
+handed back first. For the other enemies that is a clean exit — they were not
+beaten, so they get their armies home. For the fallen country it is no rescue:
+it has no home left, so its expedition lands in a stockpile the victor empties
+a moment later. Beating a country that is invading someone else wins you the
+army it sent.
 
 Every deadline is an absolute timestamp in SQLite, and a sweeper settles
 whatever has expired. Restarting mid-war loses nothing but the seconds

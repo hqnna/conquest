@@ -9,7 +9,6 @@ import type {
 } from 'discord.js';
 import {countryLabel, findCountry} from '../data/countries.js';
 import {getCountry} from '../db/countries.js';
-import {getPendingInvasionFor} from '../db/invasions.js';
 import type {Stake} from '../db/invasions.js';
 import {getPlayer} from '../db/players.js';
 import type {Stockpile} from '../db/resources.js';
@@ -17,9 +16,23 @@ import {stakeLine} from '../discord/invasion-ui.js';
 import {ACCENT, container, relativeTime, v2EditReply} from '../discord/ui.js';
 import {endWar, openReinforcementVote} from '../game/invasion-flow.js';
 import {proposeReinforcement} from '../game/invasions.js';
-import {defendRefusalCard} from './defend.js';
+import {defendRefusalCard, suggestEnemies, warChoiceCard} from './defend.js';
 import {stakeSuggestions} from './invade.js';
+import {chooseWar, warsAwaitingAnswer} from './war-target.js';
 import type {Command, CommandContext} from './types.js';
+
+/** The enemy in one war, as it reads in a reply. */
+function countryName(
+  invasion: {attackerCode: string; defenderCode: string},
+  code: string,
+): string {
+  const enemy = findCountry(
+    invasion.attackerCode === code
+      ? invasion.defenderCode
+      : invasion.attackerCode,
+  );
+  return enemy ? countryLabel(enemy) : '?';
+}
 
 /** Reads the three stake options off the interaction. */
 function readStake(interaction: ChatInputCommandInteraction): Stake {
@@ -30,11 +43,16 @@ function readStake(interaction: ChatInputCommandInteraction): Stake {
   };
 }
 
-/** Suggests fractions of what the country has left at home. */
-async function suggestFromStockpile(
+/** Suggests the wars awaiting an answer, and what is left at home to send. */
+async function suggestReinforcement(
   interaction: AutocompleteInteraction,
   ctx: CommandContext,
 ): Promise<void> {
+  const focused = interaction.options.getFocused(true);
+  if (focused.name === 'enemy') {
+    await suggestEnemies(interaction, ctx, warsAwaitingAnswer);
+    return;
+  }
   const guildId = interaction.guildId;
   if (!guildId) {
     await interaction.respond([]);
@@ -44,7 +62,6 @@ async function suggestFromStockpile(
   const country = player?.countryCode
     ? getCountry(ctx.db, guildId, player.countryCode)
     : undefined;
-  const focused = interaction.options.getFocused(true);
   const available = country
     ? (
         {
@@ -85,9 +102,18 @@ export const reinforceCommand: Command = {
         .setMinValue(0)
         .setAutocomplete(true)
         .setRequired(false),
+    )
+    .addStringOption(option =>
+      option
+        .setName('enemy')
+        .setDescription(
+          'Which war to send them to (only needed while fighting several)',
+        )
+        .setAutocomplete(true)
+        .setRequired(false),
     ),
 
-  autocomplete: suggestFromStockpile,
+  autocomplete: suggestReinforcement,
 
   async execute(
     interaction: ChatInputCommandInteraction,
@@ -106,10 +132,25 @@ export const reinforceCommand: Command = {
       return;
     }
 
+    const chosen = chooseWar({
+      code: player.countryCode,
+      candidates: warsAwaitingAnswer(ctx.db, guild.id, player.countryCode),
+      requested: interaction.options.getString('enemy'),
+    });
+    if (!chosen.ok) {
+      await interaction.editReply(
+        v2EditReply(
+          warChoiceCard(chosen.refusal, player.countryCode, 'reinforce'),
+        ),
+      );
+      return;
+    }
+
     const now = Date.now();
     const proposed = proposeReinforcement(ctx.db, {
       guildId: guild.id,
       code: player.countryCode,
+      invasionId: chosen.invasion.id,
       proposerId: interaction.user.id,
       stake: readStake(interaction),
       now,
@@ -134,7 +175,7 @@ export const reinforceCommand: Command = {
       v2EditReply(
         container(
           ACCENT.warning,
-          '## You proposed reinforcements',
+          `## You proposed reinforcements against ${countryName(chosen.invasion, player.countryCode)}`,
           `**Sending:** ${stakeLine(proposed.proposal.stake)}\nYour countrymen are voting on it now.`,
           `If it is not approved by ${relativeTime(proposed.proposal.voteDeadline)}, the war is over and your country has lost it.`,
         ),
@@ -146,8 +187,25 @@ export const reinforceCommand: Command = {
 export const surrenderCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('surrender')
-    .setDescription('Give up the war your country is fighting')
-    .setContexts(InteractionContextType.Guild),
+    .setDescription('Give up a war your country is fighting')
+    .setContexts(InteractionContextType.Guild)
+    .addStringOption(option =>
+      option
+        .setName('enemy')
+        .setDescription(
+          'Which war to give up (only needed while fighting several)',
+        )
+        .setAutocomplete(true)
+        .setRequired(false),
+    ),
+
+  /** Offers only the wars that are actually asking for an answer. */
+  async autocomplete(
+    interaction: AutocompleteInteraction,
+    ctx: CommandContext,
+  ): Promise<void> {
+    await suggestEnemies(interaction, ctx, warsAwaitingAnswer);
+  },
 
   async execute(
     interaction: ChatInputCommandInteraction,
@@ -159,38 +217,33 @@ export const surrenderCommand: Command = {
     await interaction.deferReply({flags: MessageFlags.Ephemeral});
 
     const player = getPlayer(ctx.db, guild.id, interaction.user.id);
-    const invasion = player?.countryCode
-      ? getPendingInvasionFor(ctx.db, guild.id, player.countryCode)
-      : undefined;
-
-    if (!player?.countryCode || !invasion) {
+    if (!player?.countryCode) {
       await interaction.editReply(
-        v2EditReply(defendRefusalCard({kind: 'not_under_attack'})),
+        v2EditReply(defendRefusalCard({kind: 'not_in_country'})),
       );
       return;
     }
 
-    const side =
-      invasion.attackerCode === player.countryCode ? 'attacker' : 'defender';
-
     // Surrender is the answer to being asked to reinforce, not a way out of a
-    // war a country is currently winning.
-    if (
-      invasion.status !== 'reinforcing' ||
-      invasion.reinforcingSide !== side
-    ) {
+    // war a country is currently winning, so only wars that are asking are
+    // offered at all.
+    const chosen = chooseWar({
+      code: player.countryCode,
+      candidates: warsAwaitingAnswer(ctx.db, guild.id, player.countryCode),
+      requested: interaction.options.getString('enemy'),
+    });
+    if (!chosen.ok) {
       await interaction.editReply(
         v2EditReply(
-          container(
-            ACCENT.neutral,
-            '### There is nothing to surrender yet.',
-            'A country gives up only once its forces in the field are spent and it is asked to reinforce.',
-          ),
+          warChoiceCard(chosen.refusal, player.countryCode, 'surrender'),
         ),
       );
       return;
     }
 
+    const invasion = chosen.invasion;
+    const side =
+      invasion.attackerCode === player.countryCode ? 'attacker' : 'defender';
     const now = Date.now();
     await endWar(
       ctx.db,

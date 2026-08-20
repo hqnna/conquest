@@ -9,7 +9,7 @@ import {countryLabel, findCountry} from '../data/countries.js';
 import {getCountry} from '../db/countries.js';
 import type {Database} from '../db/index.js';
 import {countCountryMembers, getPlayer, leaveCountry} from '../db/players.js';
-import {getPendingInvasionFor} from '../db/invasions.js';
+import {listPendingInvasionsFor} from '../db/invasions.js';
 import {
   cancelMergesFor,
   discardPlayerMergeVotes,
@@ -55,7 +55,7 @@ export async function removePlayerFromCountry(
   if (!decision.ok) return undefined;
 
   const state = getCountry(db, guild.id, decision.code);
-  const invasion = getPendingInvasionFor(db, guild.id, decision.code);
+  const invasions = listPendingInvasionsFor(db, guild.id, decision.code);
   const merge = getPendingMergeFor(db, guild.id, decision.code);
 
   // Their ballots go with them, so any threshold is recounted over the
@@ -80,25 +80,27 @@ export async function removePlayerFromCountry(
     }
   }
 
-  if (decision.deactivates && invasion) {
-    // Nobody is left to fight the war. Both sides get their stake back.
-    cancelInvasion(db, invasion, options.now);
-    await announce(
-      db,
-      guild,
-      container(
-        ACCENT.warning,
-        '## The war is called off',
-        `${countryName(invasion.attackerCode)} against ${countryName(invasion.defenderCode)} ends with nobody left to fight it.`,
-        invasion.status === 'defense_window'
-          ? `Every stake was returned, including ${stakeLine(invasion.attack)} from the attacker.`
-          : 'Nothing had been committed.',
-      ),
-    );
-  } else if (invasion) {
-    // The vote threshold moves with the country's size, so a departure can
-    // decide a vote that was still open.
-    if (invasion.status === 'attack_vote') {
+  // A country can be fighting several wars at once, and every one of them is
+  // affected by a player walking out of it.
+  for (const invasion of invasions) {
+    if (decision.deactivates) {
+      // Nobody is left to fight the war. Both sides get their stake back.
+      cancelInvasion(db, invasion, options.now);
+      await announce(
+        db,
+        guild,
+        container(
+          ACCENT.warning,
+          '## The war is called off',
+          `${countryName(invasion.attackerCode)} against ${countryName(invasion.defenderCode)} ends with nobody left to fight it.`,
+          invasion.status === 'defense_window'
+            ? `Every stake was returned, including ${stakeLine(invasion.attack)} from the attacker.`
+            : 'Nothing had been committed.',
+        ),
+      );
+    } else if (invasion.status === 'attack_vote') {
+      // The vote threshold moves with the country's size, so a departure can
+      // decide a vote that was still open.
       await readAttackVote(db, guild, invasion, options.now);
     } else {
       await readDefenseVote(db, guild, invasion, options.now);

@@ -138,26 +138,67 @@ export function getInvasion(db: Database, id: number): Invasion | undefined {
 }
 
 /**
- * The invasion a country is currently caught up in, attacking or defending.
+ * One of the invasions a country is caught up in, attacking or defending.
  *
- * A country may be in at most one at a time, which is what makes overlapping
- * declarations rejectable.
+ * A country may be in several at once — that is what lets a third country come
+ * to somebody's aid by striking their invader mid-war — so this answers "is it
+ * fighting at all", and callers that need to act on a particular war use
+ * {@link listPendingInvasionsFor} or {@link getPendingInvasionBetween}.
  */
 export function getPendingInvasionFor(
   db: Database,
   guildId: string,
   code: string,
 ): Invasion | undefined {
+  return listPendingInvasionsFor(db, guildId, code)[0];
+}
+
+/**
+ * Every invasion a country is caught up in, oldest first, on either side.
+ *
+ * Wars are independent of one another: each has its own escrow, its own
+ * rounds, and its own end.
+ */
+export function listPendingInvasionsFor(
+  db: Database,
+  guildId: string,
+  code: string,
+): Invasion[] {
+  return (
+    db
+      .prepare(
+        `SELECT * FROM invasions
+          WHERE guild_id = ?
+            AND (attacker_code = ? OR defender_code = ?)
+            AND status IN ('attack_vote', 'defense_window', 'war', 'reinforcing')
+          ORDER BY id`,
+      )
+      .all(guildId, code, code) as InvasionRow[]
+  ).map(toInvasion);
+}
+
+/**
+ * The pending invasion of one country by another, if there is one.
+ *
+ * Direction matters: a country marching on its own invader is a second war,
+ * not this one. What this rules out is the same country declaring twice on the
+ * same target.
+ */
+export function getPendingInvasionBetween(
+  db: Database,
+  guildId: string,
+  attackerCode: string,
+  defenderCode: string,
+): Invasion | undefined {
   const row = db
     .prepare(
       `SELECT * FROM invasions
-        WHERE guild_id = ?
-          AND (attacker_code = ? OR defender_code = ?)
+        WHERE guild_id = ? AND attacker_code = ? AND defender_code = ?
           AND status IN ('attack_vote', 'defense_window', 'war', 'reinforcing')
         ORDER BY id
         LIMIT 1`,
     )
-    .get(guildId, code, code) as InvasionRow | undefined;
+    .get(guildId, attackerCode, defenderCode) as InvasionRow | undefined;
   return row && toInvasion(row);
 }
 

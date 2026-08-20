@@ -8,9 +8,10 @@ import type {
   ChatInputCommandInteraction,
   ContainerBuilder,
 } from 'discord.js';
+import {DISCORD_LIMITS} from '../config/constants.js';
 import {countryLabel, findCountry} from '../data/countries.js';
 import {getCountry} from '../db/countries.js';
-import type {Stake} from '../db/invasions.js';
+import type {Invasion, Stake} from '../db/invasions.js';
 import {getPlayer} from '../db/players.js';
 import type {Stockpile} from '../db/resources.js';
 import {stakeLine} from '../discord/invasion-ui.js';
@@ -19,6 +20,8 @@ import {openDefenseVote} from '../game/invasion-flow.js';
 import {proposeDefense} from '../game/invasions.js';
 import type {DefendRefusal} from '../game/invasions.js';
 import {stakeSuggestions} from './invade.js';
+import {chooseWar, enemyLabel, enemyOf, warsToDefend} from './war-target.js';
+import type {WarChoiceRefusal} from './war-target.js';
 import type {Command, CommandContext} from './types.js';
 
 /** Turns a refusal into a card that says what to do next. */
@@ -71,6 +74,98 @@ export function defendRefusalCard(refusal: DefendRefusal): ContainerBuilder {
   }
 }
 
+/** One line naming a war and what it is waiting for. */
+export function warOptionLine(code: string, invasion: Invasion): string {
+  const them = enemyLabel(enemyOf(code, invasion));
+  switch (invasion.status) {
+    case 'defense_window':
+      return `• **${them}** — a defence is due ${relativeTime(invasion.defenseDeadline ?? 0)}`;
+    case 'reinforcing':
+      return `• **${them}** — reinforce or give up by ${relativeTime(invasion.reinforceDeadline ?? 0)}`;
+    case 'war':
+      return `• **${them}** — being fought, ${invasion.rounds} round${invasion.rounds === 1 ? '' : 's'} in`;
+    default:
+      return `• **${them}**`;
+  }
+}
+
+/**
+ * Says which war a command needed to be told about.
+ *
+ * @param verb what the player was trying to do, for the copy.
+ */
+export function warChoiceCard(
+  refusal: WarChoiceRefusal,
+  code: string,
+  verb: 'defend' | 'reinforce' | 'surrender',
+): ContainerBuilder {
+  const command =
+    verb === 'defend'
+      ? '`/defend enemy:<country> troops:<n>`'
+      : verb === 'reinforce'
+        ? '`/reinforce enemy:<country> troops:<n>`'
+        : '`/surrender enemy:<country>`';
+
+  switch (refusal.kind) {
+    case 'none':
+      return verb === 'defend'
+        ? container(
+            ACCENT.neutral,
+            '### Nobody is invading you.',
+            'There is nothing to defend against. `/defend` only works while your country is under attack.',
+          )
+        : container(
+            ACCENT.neutral,
+            '### There is nothing to answer.',
+            'A country reinforces or gives up only once its forces in one war are spent and it is asked.',
+          );
+    case 'ambiguous':
+      return container(
+        ACCENT.warning,
+        '### Which war?',
+        'Your country is fighting more than one, so name the enemy:',
+        refusal.candidates
+          .map(invasion => warOptionLine(code, invasion))
+          .join('\n'),
+        `Run ${command}.`,
+      );
+    case 'unknown':
+      return container(
+        ACCENT.danger,
+        `### No such war with “${enemyLabel(refusal.requested)}”.`,
+        'These are the wars this applies to:',
+        refusal.candidates
+          .map(invasion => warOptionLine(code, invasion))
+          .join('\n'),
+      );
+  }
+}
+
+/** Offers the enemies a command applies to, straight from the database. */
+export async function suggestEnemies(
+  interaction: AutocompleteInteraction,
+  ctx: CommandContext,
+  wars: (db: CommandContext['db'], guildId: string, code: string) => Invasion[],
+): Promise<void> {
+  const guildId = interaction.guildId;
+  const player = guildId
+    ? getPlayer(ctx.db, guildId, interaction.user.id)
+    : undefined;
+  if (!guildId || !player?.countryCode) {
+    await interaction.respond([]);
+    return;
+  }
+  const code = player.countryCode;
+  const typed = interaction.options.getFocused().toLowerCase();
+  await interaction.respond(
+    wars(ctx.db, guildId, code)
+      .map(invasion => enemyOf(code, invasion))
+      .filter(enemy => enemyLabel(enemy).toLowerCase().includes(typed))
+      .slice(0, DISCORD_LIMITS.autocompleteChoices)
+      .map(enemy => ({name: enemyLabel(enemy), value: enemy})),
+  );
+}
+
 export const defendCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('defend')
@@ -99,13 +194,30 @@ export const defendCommand: Command = {
         .setMinValue(0)
         .setAutocomplete(true)
         .setRequired(false),
+    )
+    .addStringOption(option =>
+      option
+        .setName('enemy')
+        .setDescription(
+          'Which invader to answer (only needed while fighting several)',
+        )
+        .setAutocomplete(true)
+        .setRequired(false),
     ),
 
-  /** Suggests fractions of what the country has left to defend with. */
+  /**
+   * Suggests the invaders to answer, and fractions of what the country has
+   * left to defend with.
+   */
   async autocomplete(
     interaction: AutocompleteInteraction,
     ctx: CommandContext,
   ): Promise<void> {
+    const focused = interaction.options.getFocused(true);
+    if (focused.name === 'enemy') {
+      await suggestEnemies(interaction, ctx, warsToDefend);
+      return;
+    }
     const guildId = interaction.guildId;
     if (!guildId) {
       await interaction.respond([]);
@@ -115,7 +227,6 @@ export const defendCommand: Command = {
     const country = player?.countryCode
       ? getCountry(ctx.db, guildId, player.countryCode)
       : undefined;
-    const focused = interaction.options.getFocused(true);
     const available = country
       ? (
           {
@@ -152,9 +263,24 @@ export const defendCommand: Command = {
     };
     const now = Date.now();
 
+    const chosen = chooseWar({
+      code: player.countryCode,
+      candidates: warsToDefend(ctx.db, guild.id, player.countryCode),
+      requested: interaction.options.getString('enemy'),
+    });
+    if (!chosen.ok) {
+      await interaction.editReply(
+        v2EditReply(
+          warChoiceCard(chosen.refusal, player.countryCode, 'defend'),
+        ),
+      );
+      return;
+    }
+
     const proposed = proposeDefense(ctx.db, {
       guildId: guild.id,
       code: player.countryCode,
+      invasionId: chosen.invasion.id,
       proposerId: interaction.user.id,
       stake,
       now,

@@ -166,46 +166,58 @@ describe('declareInvasion', () => {
     });
   });
 
-  it('allows only one invasion per country, on either side', () => {
+  it('allows only one war against the same target at a time', () => {
     const first = declare(db);
     expect(first.ok).toBe(true);
 
-    const second = declare(db);
-    expect(second).toEqual({
+    expect(declare(db)).toEqual({
       ok: false,
       refusal: {
-        kind: 'attacker_busy',
-        invasionId: first.ok ? first.invasion.id : 0,
-      },
-    });
-
-    const third = declareInvasion(db, {
-      guildId: G,
-      attackerCode: 'BE',
-      defenderCode: 'DE',
-      stake: stake(5),
-      now: NOW,
-    });
-    expect(third).toEqual({
-      ok: false,
-      refusal: {
-        kind: 'target_busy',
+        kind: 'already_invading',
         invasionId: first.ok ? first.invasion.id : 0,
       },
     });
   });
 
-  it('lets an uninvolved country declare its own war', () => {
+  it('lets a second country pile on the same target', () => {
     declare(db);
-    const other = declareInvasion(db, {
-      guildId: G,
-      attackerCode: 'BE',
-      defenderCode: 'FR',
-      stake: stake(5),
-      now: NOW,
-    });
-    // FR is already attacking, so it cannot also be attacked.
-    expect(other.ok).toBe(false);
+    expect(
+      declareInvasion(db, {
+        guildId: G,
+        attackerCode: 'BE',
+        defenderCode: 'DE',
+        stake: stake(5),
+        now: NOW,
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('lets a third country strike an invader mid-war, which is the point', () => {
+    // France marches on Germany; Belgium comes to Germany's aid by opening a
+    // second front against France.
+    declare(db);
+    expect(
+      declareInvasion(db, {
+        guildId: G,
+        attackerCode: 'BE',
+        defenderCode: 'FR',
+        stake: stake(5),
+        now: NOW,
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('lets the invaded country march back on its invader', () => {
+    declare(db);
+    expect(
+      declareInvasion(db, {
+        guildId: G,
+        attackerCode: 'DE',
+        defenderCode: 'FR',
+        stake: stake(5),
+        now: NOW,
+      }).ok,
+    ).toBe(true);
   });
 });
 
@@ -269,6 +281,7 @@ describe('proposeDefense', () => {
     const result = proposeDefense(db, {
       guildId: G,
       code: 'DE',
+      invasionId: invasion.id,
       proposerId: 'u1',
       stake: stake(30, 5, 5),
       now: NOW + 100,
@@ -284,6 +297,7 @@ describe('proposeDefense', () => {
     const result = proposeDefense(db, {
       guildId: G,
       code: 'DE',
+      invasionId: invasion.id,
       proposerId: 'u1',
       stake: stake(5),
       now: late,
@@ -293,12 +307,13 @@ describe('proposeDefense', () => {
     );
   });
 
-  it('refuses a country that is not under attack', () => {
-    inFlight(db);
+  it('refuses a country that is not the defender in that war', () => {
+    const invasion = inFlight(db);
     expect(
       proposeDefense(db, {
         guildId: G,
         code: 'BE',
+        invasionId: invasion.id,
         proposerId: 'u1',
         stake: stake(5),
         now: NOW,
@@ -307,11 +322,12 @@ describe('proposeDefense', () => {
   });
 
   it('refuses the attacker proposing a defence of the country it is invading', () => {
-    inFlight(db);
+    const invasion = inFlight(db);
     expect(
       proposeDefense(db, {
         guildId: G,
         code: 'FR',
+        invasionId: invasion.id,
         proposerId: 'u1',
         stake: stake(5),
         now: NOW,
@@ -319,11 +335,12 @@ describe('proposeDefense', () => {
     ).toEqual({ok: false, refusal: {kind: 'not_under_attack'}});
   });
 
-  it('allows only one pending proposal at a time', () => {
-    inFlight(db);
+  it('allows only one pending proposal per war', () => {
+    const invasion = inFlight(db);
     proposeDefense(db, {
       guildId: G,
       code: 'DE',
+      invasionId: invasion.id,
       proposerId: 'u1',
       stake: stake(5),
       now: NOW,
@@ -331,6 +348,7 @@ describe('proposeDefense', () => {
     const second = proposeDefense(db, {
       guildId: G,
       code: 'DE',
+      invasionId: invasion.id,
       proposerId: 'u2',
       stake: stake(6),
       now: NOW,
@@ -344,6 +362,7 @@ describe('proposeDefense', () => {
     const first = proposeDefense(db, {
       guildId: G,
       code: 'DE',
+      invasionId: invasion.id,
       proposerId: 'u1',
       stake: stake(5),
       now: NOW,
@@ -365,6 +384,7 @@ describe('proposeDefense', () => {
     const second = proposeDefense(db, {
       guildId: G,
       code: 'DE',
+      invasionId: invasion.id,
       proposerId: 'u2',
       stake: stake(9),
       now: NOW + 10,
@@ -377,10 +397,11 @@ describe('proposeDefense', () => {
   });
 
   it('refuses a defence the country cannot afford', () => {
-    inFlight(db);
+    const invasion = inFlight(db);
     const result = proposeDefense(db, {
       guildId: G,
       code: 'DE',
+      invasionId: invasion.id,
       proposerId: 'u1',
       stake: stake(500),
       now: NOW,
@@ -394,6 +415,7 @@ describe('proposeDefense', () => {
     const proposed = proposeDefense(db, {
       guildId: G,
       code: 'DE',
+      invasionId: invasion.id,
       proposerId: 'u1',
       stake: stake(5),
       now: NOW,
@@ -404,6 +426,7 @@ describe('proposeDefense', () => {
     const again = proposeDefense(db, {
       guildId: G,
       code: 'DE',
+      invasionId: invasion.id,
       proposerId: 'u2',
       stake: stake(5),
       now: NOW + 1,
@@ -418,6 +441,7 @@ function atWar(db: Database, attack = stake(40), defense = stake(30)) {
   const proposed = proposeDefense(db, {
     guildId: G,
     code: 'DE',
+    invasionId: invasion.id,
     proposerId: 'd1',
     stake: defense,
     now: NOW,
@@ -571,6 +595,7 @@ describe('reinforcements', () => {
       proposeReinforcement(db, {
         guildId: G,
         code: 'DE',
+        invasionId: spent.id,
         proposerId: 'd1',
         stake: stake(5),
         now: NOW,
@@ -581,6 +606,7 @@ describe('reinforcements', () => {
       proposeReinforcement(db, {
         guildId: G,
         code: 'FR',
+        invasionId: spent.id,
         proposerId: 'a1',
         stake: stake(5),
         now: NOW,
@@ -590,11 +616,12 @@ describe('reinforcements', () => {
   });
 
   it('cannot be proposed while the fighting is going normally', () => {
-    atWar(db, stake(40), stake(30));
+    const fighting = atWar(db, stake(40), stake(30));
     expect(
       proposeReinforcement(db, {
         guildId: G,
         code: 'FR',
+        invasionId: fighting.id,
         proposerId: 'a1',
         stake: stake(5),
         now: NOW,
@@ -607,6 +634,7 @@ describe('reinforcements', () => {
     const proposed = proposeReinforcement(db, {
       guildId: G,
       code: 'FR',
+      invasionId: spent.id,
       proposerId: 'a1',
       stake: stake(25, 5, 5),
       now: NOW,
@@ -630,6 +658,7 @@ describe('reinforcements', () => {
     const proposed = proposeReinforcement(db, {
       guildId: G,
       code: 'FR',
+      invasionId: spent.id,
       proposerId: 'a1',
       stake: stake(25, 5, 5),
       now: NOW,
@@ -651,6 +680,7 @@ describe('reinforcements', () => {
     const result = proposeReinforcement(db, {
       guildId: G,
       code: 'FR',
+      invasionId: spent.id,
       proposerId: 'a1',
       stake: stake(9_000),
       now: NOW,
@@ -858,11 +888,100 @@ describe('cancelInvasion', () => {
     proposeDefense(db, {
       guildId: G,
       code: 'DE',
+      invasionId: invasion.id,
       proposerId: 'd1',
       stake: stake(5),
       now: NOW,
     });
     cancelInvasion(db, invasion, NOW + 5);
     expect(getPendingProposal(db, invasion.id)).toBeUndefined();
+  });
+});
+
+describe('a country that falls while fighting elsewhere', () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = world();
+    joinCountry(db, {guildId: G, userId: 'a1', code: 'FR', now: NOW});
+    joinCountry(db, {guildId: G, userId: 'd1', code: 'DE', now: NOW});
+    joinCountry(db, {guildId: G, userId: 'b1', code: 'BE', now: NOW});
+  });
+
+  /** Marches one country on another and escrows the stake. */
+  function march(attacker: string, defender: string, troops: number) {
+    const declared = declareInvasion(db, {
+      guildId: G,
+      attackerCode: attacker,
+      defenderCode: defender,
+      stake: stake(troops),
+      now: NOW,
+    });
+    if (!declared.ok) throw new Error('declaration refused');
+    const escrow = escrowAndOpenDefense(db, declared.invasion, NOW);
+    if (!escrow.ok) throw new Error('escrow refused');
+    return getInvasion(db, declared.invasion.id)!;
+  }
+
+  it('captures the army it had abroad, and gives its other enemy theirs back', () => {
+    // France is invading Belgium with 30 when Germany invades France with 40.
+    const abroad = march('FR', 'BE', 30);
+    const athome = march('DE', 'FR', 40);
+
+    const report = concludeWar(db, athome, 'attacker', 'surrender', NOW + 10);
+
+    // The war France was fighting elsewhere ended with France.
+    expect(report.cancelledWars.map(war => war.id)).toEqual([abroad.id]);
+    expect(getInvasion(db, abroad.id)?.status).toBe('cancelled');
+
+    // Germany took France's whole stockpile, the expedition included: France
+    // had 100 troops, staked 30 abroad and 0 at home, and all of it is now
+    // German — along with Germany's own 40 marching home.
+    expect(getStockpile(db, G, 'DE')?.troops).toBe(60 + 40 + 100);
+    expect(getStockpile(db, G, 'FR')).toEqual({troops: 0, gold: 0, food: 0});
+
+    // Belgium was not beaten by anybody, so it simply has its own back.
+    expect(getStockpile(db, G, 'BE')?.troops).toBe(100);
+  });
+
+  it('hands a defending third country its committed force back untouched', () => {
+    const abroad = march('FR', 'BE', 30);
+    const defence = proposeDefense(db, {
+      guildId: G,
+      code: 'BE',
+      invasionId: abroad.id,
+      proposerId: 'b1',
+      stake: stake(25, 10, 10),
+      now: NOW,
+    });
+    if (!defence.ok) throw new Error('defence refused');
+    escrowDefense(db, abroad, defence.proposal, NOW);
+    expect(getStockpile(db, G, 'BE')).toEqual({
+      troops: 75,
+      gold: 90,
+      food: 90,
+    });
+
+    const athome = march('DE', 'FR', 40);
+    concludeWar(db, athome, 'attacker', 'surrender', NOW + 10);
+
+    // Belgium's defence comes home whole: it lost nothing to a war that was
+    // called off over its head.
+    expect(getStockpile(db, G, 'BE')).toEqual({
+      troops: 100,
+      gold: 100,
+      food: 100,
+    });
+  });
+
+  it('leaves the victor’s own other wars alone', () => {
+    // Germany is invading both France and Belgium; France falls.
+    const elsewhere = march('DE', 'BE', 20);
+    const athome = march('DE', 'FR', 40);
+
+    const report = concludeWar(db, athome, 'attacker', 'surrender', NOW + 10);
+
+    expect(report.cancelledWars).toEqual([]);
+    expect(getInvasion(db, elsewhere.id)?.status).toBe('defense_window');
   });
 });
