@@ -136,17 +136,27 @@ export function conquestCount(
   ).held;
 }
 
-/** How many territories each country holds, highest first. */
+/**
+ * How much of the world each active country holds.
+ *
+ * A country holds its own homeland as well as everything it has conquered, so
+ * a country that has taken nobody still holds one territory. Only active
+ * countries appear: a defeated one holds nothing, because its homeland and
+ * its territories both changed hands when it fell.
+ */
 export function territoryCounts(
   db: Database,
   guildId: string,
 ): Map<string, number> {
   const rows = db
     .prepare(
-      `SELECT owner_code AS code, count(*) AS held
-         FROM countries
-        WHERE guild_id = ? AND owner_code IS NOT NULL
-        GROUP BY owner_code`,
+      `SELECT c.code AS code,
+              1 + (SELECT count(*)
+                     FROM countries t
+                    WHERE t.guild_id = c.guild_id AND t.owner_code = c.code)
+                AS held
+         FROM countries c
+        WHERE c.guild_id = ? AND c.status = 'active'`,
     )
     .all(guildId) as Array<{code: string; held: number}>;
   return new Map(rows.map(row => [row.code, row.held]));

@@ -128,15 +128,15 @@ export function countryCard(input: {
       ? members.map(id => `<@${id}>`).join(', ')
       : 'Nobody — this country is about to be disbanded.';
 
-  const territoryList =
-    territories.length > 0
-      ? territories
-          .map(territory => {
-            const data = findCountry(territory.code);
-            return data ? countryLabel(data) : territory.code;
-          })
-          .join(', ')
-      : 'None yet.';
+  // A country holds its own homeland as well as everything it has taken, so
+  // it is first in its own list and counts towards its own total.
+  const holdings = [
+    countryLabel(country),
+    ...territories.map(territory => {
+      const data = findCountry(territory.code);
+      return data ? countryLabel(data) : territory.code;
+    }),
+  ];
 
   const timers = [
     ...(input.invasion ? [warLine(country.code, input.invasion)] : []),
@@ -148,7 +148,7 @@ export function countryCard(input: {
     `## ${countryLabel(country)}`,
     [
       `**Players (${members.length}):** ${roster}`,
-      `**Territories (${territories.length}):** ${territoryList}`,
+      `**Territories (${holdings.length}):** ${holdings.join(', ')}`,
     ].join('\n'),
     input.viewerIsMember
       ? `**Stockpile** — 🌾 ${state.food} food · 🪙 ${state.gold} gold · ⚔️ ${state.troops} troops`

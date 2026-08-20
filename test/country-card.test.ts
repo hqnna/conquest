@@ -74,8 +74,15 @@ describe('countryCard', () => {
     });
     expect(text).toContain('<@u1>');
     expect(text).toContain('Players (2)');
+    // Its own homeland, and the one it took.
+    expect(text).toContain('Territories (2)');
+    expect(text).toContain('🇫🇷 France, 🇩🇪 Germany');
+  });
+
+  it('counts a country that has taken nobody as holding its homeland', () => {
+    const text = card({territories: []});
     expect(text).toContain('Territories (1)');
-    expect(text).toContain('🇩🇪 Germany');
+    expect(text).toContain('🇫🇷 France');
   });
 
   it('names the conqueror of a fallen country', () => {

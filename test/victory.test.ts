@@ -79,7 +79,8 @@ describe('checkVictory', () => {
 
     expect(checkVictory(db, G, NOW + 5_000)).toEqual({
       code: 'FR',
-      territories: 2,
+      // Its own homeland, and the two it took.
+      territories: 3,
       duration: 5_000,
     });
   });

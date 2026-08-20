@@ -164,6 +164,10 @@ Every deadline is an absolute timestamp in SQLite, and a sweeper settles
 whatever has expired. Restarting mid-war loses nothing but the seconds
 Conquest was down.
 
+A country's **territory count** is the land it holds: its own homeland plus
+every country it has conquered. A country that has taken nobody still holds
+one territory, its own.
+
 ### How a round ends
 
 There is one way to win, and it is **total conquest**: be the only country

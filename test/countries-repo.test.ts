@@ -103,8 +103,16 @@ describe('country repository', () => {
       'BE',
       'DE',
     ]);
-    expect(territoryCounts(db, 'g1').get('FR')).toBe(2);
+    // France, plus the two it took.
+    expect(territoryCounts(db, 'g1').get('FR')).toBe(3);
+    // A fallen country holds nothing, not even itself.
+    expect(territoryCounts(db, 'g1').has('DE')).toBe(false);
     expect(listCountriesByStatus(db, 'g1', 'defeated')).toHaveLength(2);
+  });
+
+  it('counts a country that has taken nobody as holding its homeland', () => {
+    activate(db, 'FR');
+    expect(territoryCounts(db, 'g1').get('FR')).toBe(1);
   });
 
   it('releases every territory when a country is disbanded', () => {
