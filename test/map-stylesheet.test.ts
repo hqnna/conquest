@@ -41,6 +41,13 @@ function luminance(color: number): number {
   return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0);
 }
 
+/** WCAG contrast ratio, for judging whether two colours read apart. */
+function contrast(a: number, b: number): number {
+  const high = Math.max(luminance(a), luminance(b));
+  const low = Math.min(luminance(a), luminance(b));
+  return (high + 0.05) / (low + 0.05);
+}
+
 /** The channels of a colour, so a shade can be placed between two others. */
 function channels(color: number): number[] {
   return [(color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff];
@@ -171,6 +178,33 @@ describe('a conquered country reads as its new owner', () => {
     expect(new Set(COUNTRY_PALETTE.map(shadeOf)).size).toBe(
       COUNTRY_PALETTE.length,
     );
+  });
+});
+
+describe('every empire is legible against the sea', () => {
+  // The map is drawn on near-black water, so a colour dark enough to match it
+  // leaves a country looking like it is not there at all. The palette carried
+  // a navy and a maroon that did exactly that, and shading only made it worse.
+
+  const empires = COUNTRY_PALETTE.map(color => ({
+    color,
+    name: `#${color.toString(16).padStart(6, '0')}`,
+  }));
+
+  /** A country whose colour is the given palette entry, for each entry. */
+  const owners = new Map<number, string>();
+  for (const country of COUNTRIES) {
+    const color = countryColor(country.code);
+    if (!owners.has(color)) owners.set(color, country.code);
+  }
+
+  it.each(empires)('shows $name as a country in its own right', ({color}) => {
+    expect(contrast(color, OCEAN_COLOR)).toBeGreaterThanOrEqual(3);
+  });
+
+  it.each(empires)('still shows $name once conquered', ({color}) => {
+    const held = fillFor(territory('DE', owners.get(color)!));
+    expect(contrast(held, OCEAN_COLOR)).toBeGreaterThanOrEqual(1.9);
   });
 });
 

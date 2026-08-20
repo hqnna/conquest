@@ -3,11 +3,18 @@
  * a country reads the same everywhere and keeps its colour across renders.
  */
 
-/** Curated high-contrast palette; index chosen by hashing the country code. */
+/**
+ * Curated high-contrast palette; index chosen by hashing the country code.
+ *
+ * Every colour has to stay legible against the sea, both at full strength and
+ * once shaded down into a territory. That rules out very dark colours: a
+ * near-black maroon or navy sits at the same brightness as the water and
+ * leaves a country looking like it is not on the map at all.
+ */
 export const COUNTRY_PALETTE = [
-  0xe6194b, 0x3cb44b, 0xffe119, 0x4363d8, 0xf58231, 0x911eb4, 0x46f0f0,
-  0xf032e6, 0xbcf60c, 0xfabebe, 0x008080, 0xe6beff, 0x9a6324, 0x800000,
-  0xaaffc3, 0x808000, 0xffd8b1, 0x000075, 0x2b8c8c, 0xff6f61,
+  0xe6194b, 0x3cb44b, 0xffe119, 0x4363d8, 0xf58231, 0xb532dd, 0x46f0f0,
+  0xf032e6, 0xbcf60c, 0xfabebe, 0x008080, 0xe6beff, 0x9a6324, 0xff0000,
+  0xaaffc3, 0x808000, 0xffd8b1, 0x5656ff, 0x2b8c8c, 0xff6f61,
 ] as const;
 
 /** Grey used for countries nobody has claimed. */
