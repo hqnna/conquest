@@ -50,37 +50,30 @@ describe('standings', () => {
 
 describe('worldCard', () => {
   it('says the world is empty before anyone joins', () => {
-    expect(textOf(worldCard([], 10))).toContain('The world is empty');
+    expect(textOf(worldCard([]))).toContain('The world is empty');
   });
 
   it('lists countries with their flags and holdings', () => {
-    const text = textOf(
-      worldCard([{code: 'FR', players: 2, territories: 3}], 10),
-    );
+    const text = textOf(worldCard([{code: 'FR', players: 2, territories: 3}]));
     expect(text).toContain('🇫🇷 France');
     expect(text).toContain('3 territories');
     expect(text).toContain('2 players');
   });
 
   it('singularises a lone territory and a lone player', () => {
-    const text = textOf(
-      worldCard([{code: 'FR', players: 1, territories: 1}], 10),
-    );
+    const text = textOf(worldCard([{code: 'FR', players: 1, territories: 1}]));
     expect(text).toContain('1 territory,');
     expect(text).toContain('1 player');
   });
 
-  it('shows the leader progress towards the win', () => {
+  it('says how the round is won', () => {
     const text = textOf(
-      worldCard(
-        [
-          {code: 'FR', players: 2, territories: 6},
-          {code: 'DE', players: 4, territories: 1},
-        ],
-        10,
-      ),
+      worldCard([
+        {code: 'FR', players: 2, territories: 6},
+        {code: 'DE', players: 4, territories: 1},
+      ]),
     );
     expect(text).toContain('France');
-    expect(text).toContain('6 of the 10 territories');
+    expect(text).toContain('holds every other');
   });
 });

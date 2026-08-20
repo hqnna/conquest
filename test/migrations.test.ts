@@ -54,6 +54,33 @@ describe('migrations', () => {
     );
   });
 
+  it('retires the old win conditions when it upgrades an older database', () => {
+    const db = new SQLite(':memory:');
+    // Everything up to and including guild settings, but not total conquest.
+    migrate(
+      db,
+      MIGRATIONS.filter(m => m.version < 6),
+    );
+    db.prepare(
+      `INSERT INTO guild_settings (guild_id, key, value, set_at)
+       VALUES ('g', 'domination_threshold', 4, 0),
+              ('g', 'last_standing_duration', 60, 0),
+              ('g', 'war_tick', 5, 0)`,
+    ).run();
+
+    expect(migrate(db, MIGRATIONS)).toEqual([6]);
+
+    expect(
+      db.prepare('SELECT key FROM guild_settings ORDER BY key').all(),
+    ).toEqual([{key: 'war_tick'}]);
+    const columns = db
+      .prepare('SELECT name FROM pragma_table_info(?)')
+      .all('guild_config')
+      .map(row => (row as TableRow).name);
+    expect(columns).not.toContain('sole_active_code');
+    expect(columns).not.toContain('sole_active_since');
+  });
+
   it('leaves the schema untouched when a migration fails', () => {
     const db = new SQLite(':memory:');
     const broken = [

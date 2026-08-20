@@ -11,10 +11,6 @@ export interface GuildConfig {
   createdAt: number;
   /** When the current round began: setup, or the last reset. */
   roundStartedAt: number;
-  /** The only country left standing, if there is exactly one. */
-  soleActiveCode: string | null;
-  /** Since when it has been alone. Being alone long enough wins the round. */
-  soleActiveSince: number | null;
 }
 
 interface GuildConfigRow {
@@ -23,8 +19,6 @@ interface GuildConfigRow {
   log_channel_id: string;
   created_at: number;
   round_started_at: number | null;
-  sole_active_code: string | null;
-  sole_active_since: number | null;
 }
 
 function toGuildConfig(row: GuildConfigRow): GuildConfig {
@@ -34,8 +28,6 @@ function toGuildConfig(row: GuildConfigRow): GuildConfig {
     logChannelId: row.log_channel_id,
     createdAt: row.created_at,
     roundStartedAt: row.round_started_at ?? row.created_at,
-    soleActiveCode: row.sole_active_code,
-    soleActiveSince: row.sole_active_since,
   };
 }
 
@@ -52,9 +44,9 @@ export function getGuildConfig(
 
 /**
  * Writes the guild's category and log channel, creating the configuration on
- * first `/setup` and updating it on later runs. The domination threshold and
- * creation time are preserved across re-runs so re-pointing the category does
- * not silently reset a guild's tuning.
+ * first `/setup` and updating it on later runs. The round's start and the
+ * creation time are preserved across re-runs, so re-pointing the category
+ * does not silently restart a guild's game.
  */
 export function upsertGuildConfig(
   db: Database,
@@ -87,29 +79,10 @@ export function getGuildIds(db: Database): string[] {
   ).map(row => row.guild_id);
 }
 
-/**
- * Records which country is the only one left, and since when.
- *
- * Passing null clears it, which is what happens the moment anybody else joins
- * the world: the clock starts again from scratch rather than resuming.
- */
-export function setSoleActive(
-  db: Database,
-  guildId: string,
-  code: string | null,
-  since: number | null,
-): void {
-  db.prepare(
-    'UPDATE guild_config SET sole_active_code = ?, sole_active_since = ? WHERE guild_id = ?',
-  ).run(code, code === null ? null : since, guildId);
-}
-
 /** Starts a fresh round, keeping the guild's setup and its tuning. */
 export function startRound(db: Database, guildId: string, now: number): void {
   db.prepare(
-    `UPDATE guild_config
-        SET round_started_at = ?, sole_active_code = NULL, sole_active_since = NULL
-      WHERE guild_id = ?`,
+    'UPDATE guild_config SET round_started_at = ? WHERE guild_id = ?',
   ).run(now, guildId);
 }
 

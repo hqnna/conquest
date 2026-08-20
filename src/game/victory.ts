@@ -1,65 +1,40 @@
 /**
  * Winning the round, and starting the next one.
  *
- * A round ends when one country dominates: it holds enough territory, or it
- * is simply the last one standing and has been for long enough. Both are
- * checked from stored state on every sweep, so neither depends on a timer
- * surviving a restart.
+ * There is one way to win: total conquest. A country wins the moment it is
+ * the only one left active and it got there by taking somebody — every other
+ * country that raised a flag this round is now its territory. The check reads
+ * stored state on every sweep, so it does not depend on a timer surviving a
+ * restart.
  */
 import {
+  conquestCount,
   listCountriesByStatus,
   listCountries,
   territoryCounts,
 } from '../db/countries.js';
+import {getGuildConfig, startRound} from '../db/guild-config.js';
 import type {CountryState} from '../db/countries.js';
-import {getGuildConfig, setSoleActive, startRound} from '../db/guild-config.js';
-import {settingsFor} from '../db/guild-settings.js';
 import type {Database} from '../db/index.js';
 import {clearCooldowns} from '../db/cooldowns.js';
 import {listCountryMembers} from '../db/players.js';
 
-/** How a country won the round. */
-export type VictoryReason = 'domination' | 'last_standing';
-
 /** A won round. */
 export interface Victory {
   code: string;
-  reason: VictoryReason;
-  /** Territories held at the moment of victory. */
+  /** Territories held at the moment of victory, its homeland included. */
   territories: number;
   /** How long the round ran. */
   duration: number;
 }
 
 /**
- * Decides whether a country has won on territory alone.
+ * Checks whether the round has been won.
  *
- * Only an active country can win: a defeated one holds nothing, since its
- * territories change hands along with it.
- */
-export function findDominator(
-  active: readonly CountryState[],
-  territories: ReadonlyMap<string, number>,
-  threshold: number,
-): {code: string; territories: number} | undefined {
-  const standings = active
-    .map(country => ({
-      code: country.code,
-      territories: territories.get(country.code) ?? 0,
-    }))
-    .filter(entry => entry.territories >= threshold)
-    .sort(
-      (a, b) => b.territories - a.territories || a.code.localeCompare(b.code),
-    );
-  return standings[0];
-}
-
-/**
- * Checks both ways to win, and keeps the last-country-standing clock.
- *
- * The clock is reset rather than paused whenever the world stops being a
- * one-country world, so a country cannot bank time towards a walkover between
- * rivals coming and going.
+ * Standing alone is not enough on its own: the first country founded is the
+ * only active one until somebody else joins, and a country whose only rival
+ * quietly disbanded never conquered anything. So a winner must also hold at
+ * least one country it took by force.
  *
  * @returns the victory, or undefined if the round goes on.
  */
@@ -72,44 +47,14 @@ export function checkVictory(
   if (!config) return undefined;
 
   const active = listCountriesByStatus(db, guildId, 'active');
-  const territories = territoryCounts(db, guildId);
+  if (active.length !== 1) return undefined;
 
-  const settings = settingsFor(db, guildId);
-  const dominator = findDominator(
-    active,
-    territories,
-    settings.game.dominationThreshold,
-  );
-  if (dominator) {
-    return {
-      code: dominator.code,
-      reason: 'domination',
-      territories: dominator.territories,
-      duration: now - config.roundStartedAt,
-    };
-  }
-
-  if (active.length !== 1) {
-    if (config.soleActiveCode !== null) setSoleActive(db, guildId, null, null);
-    return undefined;
-  }
-
-  const alone = active[0].code;
-  if (config.soleActiveCode !== alone || config.soleActiveSince === null) {
-    setSoleActive(db, guildId, alone, now);
-    return undefined;
-  }
-  if (
-    now - config.soleActiveSince <
-    settings.game.lastCountryStandingDuration
-  ) {
-    return undefined;
-  }
+  const winner = active[0].code;
+  if (conquestCount(db, guildId, winner) === 0) return undefined;
 
   return {
-    code: alone,
-    reason: 'last_standing',
-    territories: territories.get(alone) ?? 0,
+    code: winner,
+    territories: territoryCounts(db, guildId).get(winner) ?? 0,
     duration: now - config.roundStartedAt,
   };
 }

@@ -1,12 +1,10 @@
 import {beforeEach, describe, expect, it} from 'vitest';
 import type {Database} from 'better-sqlite3';
-import {GAME} from '../src/config/constants.js';
 import {
   activateCountry,
   getCountry,
   listCountries,
 } from '../src/db/countries.js';
-import type {CountryState} from '../src/db/countries.js';
 import {setCooldown, getCooldown} from '../src/db/cooldowns.js';
 import {getGuildConfig, upsertGuildConfig} from '../src/db/guild-config.js';
 import {
@@ -22,7 +20,6 @@ import {castVote, tallyVotes} from '../src/db/votes.js';
 import {declareInvasion} from '../src/game/invasions.js';
 import {
   checkVictory,
-  findDominator,
   resetGame,
   summariseVictory,
 } from '../src/game/victory.js';
@@ -30,32 +27,9 @@ import {
 const NOW = 1_700_000_000_000;
 const G = 'g1';
 
-function country(
-  code: string,
-  overrides: Partial<CountryState> = {},
-): CountryState {
-  return {
-    guildId: G,
-    code,
-    name: code,
-    status: 'active',
-    ownerCode: null,
-    channelId: `chan-${code}`,
-    roleId: `role-${code}`,
-    food: 0,
-    gold: 0,
-    troops: 0,
-    activatedAt: NOW,
-    protectedUntil: null,
-    invadeCooldownUntil: null,
-    defenseImmunityUntil: null,
-    ...overrides,
-  };
-}
-
-/** Retunes the win condition, the way `/game tune` does. */
-function setThreshold(db: Database, guildId: string, value: number) {
-  setOverride(db, guildId, 'domination_threshold', value, NOW);
+/** Retunes a setting, the way `/game tune` does. */
+function tune(db: Database, guildId: string, key: string, value: number) {
+  setOverride(db, guildId, key, value, NOW);
   forgetSettings(guildId);
 }
 
@@ -88,38 +62,6 @@ function conquer(db: Database, loser: string, winner: string) {
   ).run(winner, G, loser);
 }
 
-describe('findDominator', () => {
-  it('finds nobody when nobody has enough', () => {
-    expect(
-      findDominator([country('FR')], new Map([['FR', 9]]), 10),
-    ).toBeUndefined();
-  });
-
-  it('finds a country that has reached the threshold exactly', () => {
-    expect(findDominator([country('FR')], new Map([['FR', 10]]), 10)).toEqual({
-      code: 'FR',
-      territories: 10,
-    });
-  });
-
-  it('picks the largest empire when more than one qualifies', () => {
-    expect(
-      findDominator(
-        [country('FR'), country('DE')],
-        new Map([
-          ['FR', 11],
-          ['DE', 14],
-        ]),
-        10,
-      ),
-    ).toEqual({code: 'DE', territories: 14});
-  });
-
-  it('ignores countries that are not standing', () => {
-    expect(findDominator([], new Map([['DE', 20]]), 10)).toBeUndefined();
-  });
-});
-
 describe('checkVictory', () => {
   let db: Database;
 
@@ -131,120 +73,50 @@ describe('checkVictory', () => {
     expect(checkVictory(db, G, NOW)).toBeUndefined();
   });
 
-  it('declares a winner that reaches the territory threshold', () => {
-    setThreshold(db, G, 2);
+  it('declares the country that has taken every other one', () => {
     conquer(db, 'DE', 'FR');
     conquer(db, 'BE', 'FR');
 
     expect(checkVictory(db, G, NOW + 5_000)).toEqual({
       code: 'FR',
-      reason: 'domination',
       territories: 2,
       duration: 5_000,
     });
   });
 
-  it('does not declare one a territory short', () => {
-    setThreshold(db, G, 3);
+  it('waits while any rival is still standing', () => {
     conquer(db, 'DE', 'FR');
-    conquer(db, 'BE', 'FR');
     expect(checkVictory(db, G, NOW)).toBeUndefined();
   });
 
-  it('starts the clock when a country is left alone', () => {
-    conquer(db, 'DE', 'FR');
-    conquer(db, 'BE', 'FR');
-    setThreshold(db, G, 99);
-
-    expect(checkVictory(db, G, NOW + 1_000)).toBeUndefined();
-    expect(getGuildConfig(db, G)).toMatchObject({
-      soleActiveCode: 'FR',
-      soleActiveSince: NOW + 1_000,
-    });
-  });
-
-  it('declares a walkover once it has stood alone long enough', () => {
-    conquer(db, 'DE', 'FR');
-    conquer(db, 'BE', 'FR');
-    setThreshold(db, G, 99);
-    checkVictory(db, G, NOW);
-
-    expect(
-      checkVictory(db, G, NOW + GAME.lastCountryStandingDuration - 1),
-    ).toBeUndefined();
-    expect(checkVictory(db, G, NOW + GAME.lastCountryStandingDuration)).toEqual(
-      {
-        code: 'FR',
-        reason: 'last_standing',
-        territories: 2,
-        duration: GAME.lastCountryStandingDuration,
-      },
-    );
-  });
-
-  it('restarts the clock from scratch when somebody else joins the world', () => {
-    conquer(db, 'DE', 'FR');
-    conquer(db, 'BE', 'FR');
-    setThreshold(db, G, 99);
-    checkVictory(db, G, NOW);
-
-    // Somebody founds a country, so France is no longer alone.
-    activateCountry(db, {
-      guildId: G,
-      code: 'NL',
-      name: 'NL',
-      channelId: 'c',
-      roleId: 'r',
-      now: NOW + 10,
-    });
-    expect(checkVictory(db, G, NOW + 20)).toBeUndefined();
-    expect(getGuildConfig(db, G)?.soleActiveCode).toBeNull();
-
-    // They leave again: the clock starts over rather than resuming.
-    db.prepare(
-      "UPDATE countries SET status = 'inactive' WHERE guild_id = ? AND code = 'NL'",
-    ).run(G);
-    checkVictory(db, G, NOW + 30);
-    expect(getGuildConfig(db, G)?.soleActiveSince).toBe(NOW + 30);
-    expect(
-      checkVictory(db, G, NOW + GAME.lastCountryStandingDuration),
-    ).toBeUndefined();
-  });
-
-  it('restarts the clock when the survivor is a different country', () => {
-    setThreshold(db, G, 99);
+  it('does not hand the round to the first country founded', () => {
     db.prepare(
       "UPDATE countries SET status = 'inactive' WHERE code IN ('DE', 'BE')",
     ).run();
-    checkVictory(db, G, NOW);
+    // France stands alone only because nobody else has joined yet.
+    expect(checkVictory(db, G, NOW)).toBeUndefined();
+  });
 
+  it('does not count a rival that disbanded rather than fell', () => {
+    conquer(db, 'DE', 'FR');
+    // Belgium's last player leaves, so it deactivates on its own.
     db.prepare(
-      "UPDATE countries SET status = 'inactive' WHERE code = 'FR'",
+      "UPDATE countries SET status = 'inactive' WHERE code = 'BE'",
     ).run();
-    db.prepare(
-      "UPDATE countries SET status = 'active' WHERE code = 'DE'",
-    ).run();
-    checkVictory(db, G, NOW + 50);
 
-    expect(getGuildConfig(db, G)).toMatchObject({
-      soleActiveCode: 'DE',
-      soleActiveSince: NOW + 50,
-    });
+    expect(checkVictory(db, G, NOW)).toMatchObject({code: 'FR'});
+  });
+
+  it('waits when the only survivor never conquered anybody', () => {
+    db.prepare(
+      "UPDATE countries SET status = 'inactive' WHERE code IN ('DE', 'BE')",
+    ).run();
+    expect(checkVictory(db, G, NOW + 10_000)).toBeUndefined();
   });
 
   it('sees no winner in an empty world', () => {
     db.prepare("UPDATE countries SET status = 'inactive'").run();
     expect(checkVictory(db, G, NOW)).toBeUndefined();
-  });
-
-  it('prefers domination when both could apply', () => {
-    setThreshold(db, G, 2);
-    conquer(db, 'DE', 'FR');
-    conquer(db, 'BE', 'FR');
-    checkVictory(db, G, NOW);
-    expect(
-      checkVictory(db, G, NOW + GAME.lastCountryStandingDuration)?.reason,
-    ).toBe('domination');
   });
 
   it('says nothing for a guild that never ran setup', () => {
@@ -327,7 +199,7 @@ describe('resetGame', () => {
   });
 
   it('keeps the guild setup and its tuning, and starts a new round', () => {
-    setThreshold(db, G, 4);
+    tune(db, G, 'gather_cooldown', 45);
     resetGame(db, G, NOW + 100);
 
     expect(getGuildConfig(db, G)).toMatchObject({
@@ -335,11 +207,9 @@ describe('resetGame', () => {
       logChannelId: 'log',
       createdAt: NOW,
       roundStartedAt: NOW + 100,
-      soleActiveCode: null,
-      soleActiveSince: null,
     });
     // A wiped round is still this server's game, tuned the way it chose.
-    expect(settingsFor(db, G).game.dominationThreshold).toBe(4);
+    expect(settingsFor(db, G).cooldowns.farm).toBe(45 * 60_000);
   });
 
   it('leaves other guilds untouched', () => {

@@ -48,9 +48,7 @@ export function victoryCard(input: {
   return container(
     ACCENT.success,
     `# 👑 ${label(victory.code)} has won`,
-    victory.reason === 'domination'
-      ? `It holds **${victory.territories}** territories — enough to call the world its own.`
-      : 'It outlasted everyone — the last country standing, long enough that there was nobody left to challenge it.',
+    `It holds **${victory.territories}** territories — every country in the world, and nobody left to challenge it.`,
     [
       `**Victors:** ${roster}`,
       `**Conquests (${input.territoryCodes.length}):** ${territoryRoll(input.territoryCodes)}`,

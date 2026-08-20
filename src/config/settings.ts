@@ -12,7 +12,7 @@
  * prints, and how a stored value is applied — so a new tunable cannot be
  * half-added.
  */
-import {COOLDOWNS, GAME, INVASIONS, RESOURCES, WAR} from './constants.js';
+import {COOLDOWNS, INVASIONS, RESOURCES, WAR} from './constants.js';
 
 /** An inclusive range of whole numbers. */
 export interface Range {
@@ -51,10 +51,6 @@ export interface Settings {
     lossRateRange: Range;
     reinforcementWindow: number;
   };
-  game: {
-    dominationThreshold: number;
-    lastCountryStandingDuration: number;
-  };
 }
 
 /** The settings Conquest ships with, as a fresh mutable copy. */
@@ -88,10 +84,6 @@ export function defaultSettings(): Settings {
       baseLossRate: WAR.baseLossRate,
       lossRateRange: {...WAR.lossRateRange},
       reinforcementWindow: WAR.reinforcementWindow,
-    },
-    game: {
-      dominationThreshold: GAME.defaultDominationThreshold,
-      lastCountryStandingDuration: GAME.lastCountryStandingDuration,
     },
   };
 }
@@ -308,30 +300,6 @@ export const TUNABLES: readonly Tunable[] = [
     read: settings => asPercent(settings.invasions.maxSupplyBonus),
     apply: (settings, value) => {
       settings.invasions.maxSupplyBonus = fromPercent(value);
-    },
-  },
-  {
-    key: 'domination_threshold',
-    label: 'Territories needed to win',
-    description: 'How much of the world one country must hold to win.',
-    unit: 'count',
-    min: 1,
-    max: 100,
-    read: settings => settings.game.dominationThreshold,
-    apply: (settings, value) => {
-      settings.game.dominationThreshold = value;
-    },
-  },
-  {
-    key: 'last_standing_duration',
-    label: 'Last-country-standing duration',
-    description: 'How long a lone survivor must stand alone to win.',
-    unit: 'minutes',
-    min: 1,
-    max: 30 * 24 * 60,
-    read: settings => asMinutes(settings.game.lastCountryStandingDuration),
-    apply: (settings, value) => {
-      settings.game.lastCountryStandingDuration = fromMinutes(value);
     },
   },
 ];

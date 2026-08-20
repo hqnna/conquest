@@ -99,7 +99,7 @@ worth knowing.
 
 Re-running `/setup` re-points the category and reuses the existing game log,
 moving it back to the top of the category and restoring its read-only
-permissions. It does not reset the domination threshold or wipe the game.
+permissions. It does not reset the guild's tuning or wipe the game.
 
 ### Country data
 
@@ -166,20 +166,19 @@ Conquest was down.
 
 ### How a round ends
 
-A country wins by **domination** — holding the threshold in territory,
-10 by default — or by being the **last one standing** for long enough that
-nobody is left to challenge it. The last-country clock is a stored timestamp
-that restarts from scratch whenever anyone else joins the world, so time
-cannot be banked between rivals coming and going.
+There is one way to win, and it is **total conquest**: be the only country
+left active, having taken at least one country by force. Both halves matter.
+The first country founded is the only active one until somebody else joins,
+and a lone survivor whose only rival disbanded on its own never conquered
+anything — neither wins a round.
 
 Winning wipes the world: a victory announcement naming the victors, their
 conquests and how long the round ran, then every country channel and role is
 deleted and all countries, players, cooldowns, and wars go with them. The
-category, the game log, and the domination threshold survive, so nobody has to
+category, the game log, and the guild's tuning survive, so nobody has to
 run `/setup` again — players simply `/join` a fresh world.
 
-`/game reset` does the same on demand behind a confirmation button, and
-`/game config threshold:<n>` retunes the win condition mid-round.
+`/game reset` does the same on demand behind a confirmation button.
 
 ## Architecture
 

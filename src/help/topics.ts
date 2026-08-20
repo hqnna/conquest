@@ -68,7 +68,7 @@ export const TOPIC_LABELS: Readonly<
 function buildPages(
   settings: Settings,
 ): Readonly<Record<HelpTopic, HelpPage[]>> {
-  const {resources, cooldowns, invasions, war, game} = settings;
+  const {resources, cooldowns, invasions, war} = settings;
   const troopRange = `${resources.recruitYield.min}–${resources.recruitYield.max}`;
   const gatherRange = `${resources.farmYield.min}–${resources.farmYield.max}`;
 
@@ -84,7 +84,7 @@ function buildPages(
             '**Conquest is total.** Beat a country and you take everything: its stockpile, its people, its territory, and its channel as a war trophy you can read.',
           ].join('\n'),
           [
-            `**The round ends** when one country holds **${game.dominationThreshold} territories**, or when it is the last one standing for ${formatDuration(game.lastCountryStandingDuration)}.`,
+            '**The round ends** only with total conquest: when one country has taken every other country in the world and stands alone.',
             'Then the world is wiped and everyone starts again from nothing.',
           ].join('\n'),
           'New here? Read `/help topic:guide`.',
@@ -208,7 +208,7 @@ function buildPages(
             'Late in a round there may be no room to found a new country, and joining an existing one is the way in. Existing countries can always be joined.',
           ].join('\n'),
           [
-            `**Winning.** A country wins at **${game.dominationThreshold} territories** (admins can retune this with \`/game tune\`), or by standing alone for ${formatDuration(game.lastCountryStandingDuration)}.`,
+            '**Winning.** There is one way to win, and it is total conquest: be the last country left, having taken every other country yourself. A rival that disbands on its own does not count — somebody has to beat it.',
             'Then everything is wiped and the next round starts from nothing.',
           ].join('\n'),
         ],

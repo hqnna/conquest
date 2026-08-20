@@ -18,6 +18,7 @@ Use the name consistently: the bot's Discord identity, repo/package name (`conqu
 - The game uses the full list of real-world countries (ship a static JSON of ISO 3166-1 entries: code, name, flag emoji). All countries always "exist."
 - A country is **inactive** until its first player joins, at which point it becomes **active** and gets a private channel.
 - A country that is conquered is marked **defeated** and becomes a territory of the winner: not joinable, displayed as owned by the conqueror. Its channel is kept as a read-only archive (see Channels & roles).
+- A country's **territory count** is the land it holds: its own homeland plus every country it has conquered. A country that has taken nobody still holds one territory, its own.
 - If a country's last player leaves (or leaves the server), the country **deactivates**: its channel and role are deleted, its stockpile is wiped, and any territories it owned become unclaimed (inactive, joinable again, their archived channels deleted).
 
 ### Players
@@ -103,9 +104,9 @@ An invasion is not settled in one roll. Once a defense takes the field, the two 
 
 ## Win condition and reset
 
-- Configurable **domination threshold** (default: 10 territories). When a country's territory count reaches the threshold, or when it is the only active country in the guild for 72 consecutive hours, it wins. The last-country clock is stored as a timestamp and restarts from scratch whenever anyone else joins the world, so a country cannot bank time towards a walkover between rivals coming and going.
+- **Total conquest is the only way to win.** A country wins the moment it is the only active country left in the guild *and* it took at least one country by force. Both halves matter: the first country founded is alone until somebody else joins, and a lone survivor whose only rival quietly disbanded conquered nothing. There is no territory threshold and no last-country-standing clock — the round ends when one country holds every other, or it does not end.
 - On win: post a victory announcement in the game log (winner, roster, territory list, game duration), then **reset**: delete **all country roles and all country channels** (active and archived), wipe all countries/players/resources/invasions for the guild, keep the setup config, and start fresh. Players must `/join` again.
-- Admin commands: `/game reset` (manual reset, confirm with a button), `/game config threshold:<n>` (set domination threshold).
+- Admin commands: `/game reset` (manual reset, confirm with a button).
 
 ---
 
@@ -179,7 +180,7 @@ Render a flat world map image showing the game state, attached to the `/map` rep
   - Defeated territory: the **owner's color at reduced opacity/lightness**, so empires read as one blob with a bright capital.
   - Optionally stroke countries currently involved in a pending invasion in red.
 - **Rasterization:** manipulate the SVG as a string/DOM (cheerio or targeted string replacement on the id/class), then rasterize with `@resvg/resvg-js` (preferred: fast, napi prebuilt binaries) or `sharp` as fallback. No headless browser. Under Nix, if napi prebuilds misbehave in the devShell, fall back to nixpkgs' `resvg` CLI invoked as a subprocess — abstract the rasterizer behind a small interface so this is swappable.
-- **Message:** attach the PNG inside a Container (MediaGallery/File component) with a compact legend as TextDisplays (color swatch emoji ≈ approximation, or just a text list): active countries with player counts and territory counts, sorted by territories. Include leader progress toward the domination threshold.
+- **Message:** attach the PNG inside a Container (MediaGallery/File component) with a compact legend as TextDisplays (color swatch emoji ≈ approximation, or just a text list): active countries with player counts and territory counts, sorted by territories. There is no progress bar to render: the win condition is holding everything.
 - **Caching:** rendering is cheap but not free — cache the PNG keyed by a hash of the relevant state (statuses + owners + pending invasions) and reuse until state changes. Also post the fresh map to the game log automatically after every conquest.
 - **Nice-to-have:** `/map` option `region:<continent>` cropping the viewBox to a continent for readability on mobile.
 

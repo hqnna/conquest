@@ -79,7 +79,6 @@ function world(): Database {
 
 const victory: Victory = {
   code: 'FR',
-  reason: 'domination',
   territories: 10,
   duration: 3 * 24 * 60 * 60 * 1000,
 };
@@ -132,15 +131,12 @@ describe('victoryCard', () => {
     expect(text).toContain('3 days');
   });
 
-  it('tells a walkover apart from a conquest', () => {
+  it('says the winner holds the whole world', () => {
     const text = textOf(
-      victoryCard({
-        victory: {...victory, reason: 'last_standing'},
-        members: ['u1'],
-        territoryCodes: [],
-      }),
+      victoryCard({victory, members: ['u1'], territoryCodes: ['DE']}),
     );
-    expect(text).toContain('outlasted everyone');
+    expect(text).toContain('**10** territories');
+    expect(text).toContain('every country in the world');
   });
 
   it('warns that the world is about to be wiped', () => {

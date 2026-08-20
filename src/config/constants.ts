@@ -91,10 +91,6 @@ export const WAR = {
 } as const;
 
 export const GAME = {
-  /** Territories one country must hold to win, unless a guild overrides it. */
-  defaultDominationThreshold: 10,
-  /** How long a lone surviving country must stand alone to win by attrition. */
-  lastCountryStandingDuration: duration(72 * HOUR),
   /** How often the sweeper resolves expired votes, windows, and protections. */
   sweeperInterval: duration(30 * SECOND),
 } as const;

@@ -3,7 +3,6 @@ import type {ContainerBuilder} from 'discord.js';
 import {
   COOLDOWNS,
   DISCORD_LIMITS,
-  GAME,
   INVASIONS,
   RESOURCES,
   WAR,
@@ -133,10 +132,7 @@ describe('help numbers come from the tunables', () => {
   });
 
   it('quotes the win condition and the channel cap', () => {
-    expect(everything).toContain(String(GAME.defaultDominationThreshold));
-    expect(everything).toContain(
-      formatDuration(GAME.lastCountryStandingDuration),
-    );
+    expect(everything).toContain('total conquest');
     expect(everything).toContain(String(DISCORD_LIMITS.channelsPerCategory));
   });
 });

@@ -121,6 +121,21 @@ export function listTerritories(
   ).map(toCountryState);
 }
 
+/** How many countries this one has taken by force. */
+export function conquestCount(
+  db: Database,
+  guildId: string,
+  code: string,
+): number {
+  return (
+    db
+      .prepare(
+        'SELECT count(*) AS held FROM countries WHERE guild_id = ? AND owner_code = ?',
+      )
+      .get(guildId, code) as {held: number}
+  ).held;
+}
+
 /** How many territories each country holds, highest first. */
 export function territoryCounts(
   db: Database,

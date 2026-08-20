@@ -18,7 +18,7 @@ describe('guild config', () => {
     expect(getGuildConfig(db, 'guild-1')).toBeUndefined();
   });
 
-  it('stores the category, log channel, and default threshold', () => {
+  it('stores the category, the log channel, and the round start', () => {
     const config = upsertGuildConfig(db, {
       guildId: 'guild-1',
       categoryId: 'cat-1',
@@ -32,8 +32,6 @@ describe('guild config', () => {
       logChannelId: 'log-1',
       createdAt: 1_000,
       roundStartedAt: 1_000,
-      soleActiveCode: null,
-      soleActiveSince: null,
     });
     expect(getGuildConfig(db, 'guild-1')).toEqual(config);
   });

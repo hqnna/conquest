@@ -139,9 +139,7 @@ describe('formatSetting', () => {
     expect(formatSetting(TUNABLES_BY_KEY.get('home_advantage')!, 20)).toBe(
       '20%',
     );
-    expect(
-      formatSetting(TUNABLES_BY_KEY.get('domination_threshold')!, 10),
-    ).toBe('10');
+    expect(formatSetting(TUNABLES_BY_KEY.get('recruit_cost')!, 10)).toBe('10');
   });
 });
 

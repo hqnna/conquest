@@ -14,9 +14,8 @@ import type {
   OverwriteData,
   TextChannel,
 } from 'discord.js';
-import {CHANNELS, DISCORD_LIMITS, GAME} from '../config/constants.js';
+import {CHANNELS, DISCORD_LIMITS} from '../config/constants.js';
 import {getGuildConfig, upsertGuildConfig} from '../db/guild-config.js';
-import {settingsFor} from '../db/guild-settings.js';
 import {
   ACCENT,
   container,
@@ -218,7 +217,6 @@ export const setupCommand: Command = {
       categoryId: resolved.id,
       logChannelId: logChannel.id,
     });
-    const settings = settingsFor(ctx.db, guild.id);
 
     const warning =
       preexisting > 0
@@ -250,11 +248,10 @@ export const setupCommand: Command = {
           [
             `**Country channels:** ${resolved}`,
             `**Game log:** ${logChannel}${logChannelCreated ? ' (created)' : ' (reused)'} — read-only, pinned to the top of the category`,
-            `**Domination threshold:** ${settings.game.dominationThreshold} territories`,
             `**Country slots left:** ${remainingCategorySlots(resolved)} of ${DISCORD_LIMITS.channelsPerCategory} (the game log takes one)`,
           ].join('\n'),
           warning,
-          `Players can now run \`/join\`. Change the win condition later with \`/game config threshold:<n>\` (default ${GAME.defaultDominationThreshold}).`,
+          'Players can now run `/join`. The round ends when one country has conquered every other one.',
         ),
       ),
     );

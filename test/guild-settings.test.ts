@@ -1,12 +1,6 @@
 import {beforeEach, describe, expect, it} from 'vitest';
 import type {Database} from 'better-sqlite3';
-import {
-  COOLDOWNS,
-  GAME,
-  INVASIONS,
-  RESOURCES,
-  WAR,
-} from '../src/config/constants.js';
+import {COOLDOWNS, INVASIONS, RESOURCES, WAR} from '../src/config/constants.js';
 import {
   TUNABLES,
   applyOverrides,
@@ -103,8 +97,8 @@ describe('applyOverrides', () => {
   });
 
   it('applies what it is given', () => {
-    const settings = applyOverrides(new Map([['domination_threshold', 3]]));
-    expect(settings.game.dominationThreshold).toBe(3);
+    const settings = applyOverrides(new Map([['gather_cooldown', 3]]));
+    expect(settings.cooldowns.farm).toBe(3 * 60_000);
   });
 
   it('ignores a key it no longer knows, rather than failing', () => {
@@ -114,12 +108,8 @@ describe('applyOverrides', () => {
   });
 
   it('ignores a value outside what the tunable now accepts', () => {
-    const settings = applyOverrides(
-      new Map([['domination_threshold', 100_000]]),
-    );
-    expect(settings.game.dominationThreshold).toBe(
-      GAME.defaultDominationThreshold,
-    );
+    const settings = applyOverrides(new Map([['gather_cooldown', 100_000]]));
+    expect(settings.cooldowns.farm).toBe(COOLDOWNS.farm);
   });
 
   it('keeps the loss clamps containing the rate they clamp', () => {
@@ -169,9 +159,7 @@ describe('storing overrides', () => {
   });
 
   it('refuses a value the tunable will not accept', () => {
-    expect(() => setOverride(db, G, 'domination_threshold', 0, NOW)).toThrow(
-      /between/,
-    );
+    expect(() => setOverride(db, G, 'recruit_cost', 0, NOW)).toThrow(/between/);
     expect(() => setOverride(db, G, 'war_tick', 1.5, NOW)).toThrow(/whole/);
     expect(() => setOverride(db, G, 'not_a_setting', 1, NOW)).toThrow(
       /Unknown setting/,
@@ -204,12 +192,10 @@ describe('storing overrides', () => {
       logChannelId: 'l',
       now: NOW,
     });
-    tune(db, 'domination_threshold', 3);
+    tune(db, 'gather_cooldown', 3);
 
-    expect(settingsFor(db, G).game.dominationThreshold).toBe(3);
-    expect(settingsFor(db, 'g2').game.dominationThreshold).toBe(
-      GAME.defaultDominationThreshold,
-    );
+    expect(settingsFor(db, G).cooldowns.farm).toBe(3 * 60_000);
+    expect(settingsFor(db, 'g2').cooldowns.farm).toBe(COOLDOWNS.farm);
   });
 
   it('takes effect on the next read, not the next restart', () => {
@@ -222,15 +208,15 @@ describe('storing overrides', () => {
 describe('summariseSettings', () => {
   it('marks what a guild has changed, and what it has not', () => {
     const db = world();
-    tune(db, 'domination_threshold', 3);
+    tune(db, 'recruit_cost', 3);
 
     const summaries = summariseSettings(db, G);
     expect(summaries).toHaveLength(TUNABLES.length);
 
-    const threshold = summaries.find(
-      summary => summary.tunable.key === 'domination_threshold',
+    const cost = summaries.find(
+      summary => summary.tunable.key === 'recruit_cost',
     );
-    expect(threshold).toMatchObject({value: 3, isDefault: false});
+    expect(cost).toMatchObject({value: 3, isDefault: false});
 
     const untouched = summaries.find(
       summary => summary.tunable.key === 'war_tick',

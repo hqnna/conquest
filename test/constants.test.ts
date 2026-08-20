@@ -18,7 +18,7 @@ describe('constants', () => {
     expect(COOLDOWNS.rejoin).toBe(24 * 60 * 60 * 1000);
     expect(INVASIONS.defenseWindow).toBe(24 * 60 * 60 * 1000);
     expect(INVASIONS.newCountryProtection).toBe(48 * 60 * 60 * 1000);
-    expect(GAME.defaultDominationThreshold).toBe(10);
+    expect(GAME.sweeperInterval).toBe(30 * 1000);
     expect(DISCORD_LIMITS.channelsPerCategory).toBe(50);
   });
 
