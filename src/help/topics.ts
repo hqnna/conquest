@@ -16,6 +16,7 @@ export const HELP_TOPICS = [
   'guide',
   'resources',
   'invasions',
+  'merges',
   'rules',
 ] as const;
 
@@ -52,6 +53,11 @@ export const TOPIC_LABELS: Readonly<
     description: 'Votes, wars of attrition, and what they cost',
     emoji: '⚔️',
   },
+  merges: {
+    label: 'Merging',
+    description: 'Giving your country to another one, by vote',
+    emoji: '🤝',
+  },
   rules: {
     label: 'Rules',
     description: 'Cooldowns, limits, and winning the round',
@@ -68,7 +74,7 @@ export const TOPIC_LABELS: Readonly<
 function buildPages(
   settings: Settings,
 ): Readonly<Record<HelpTopic, HelpPage[]>> {
-  const {resources, cooldowns, invasions, war} = settings;
+  const {resources, cooldowns, invasions, war, merges} = settings;
   const troopRange = `${resources.recruitYield.min}–${resources.recruitYield.max}`;
   const gatherRange = `${resources.farmYield.min}–${resources.farmYield.max}`;
 
@@ -109,6 +115,10 @@ function buildPages(
           [
             '**4. March.** `/invade country:<target> troops:<n>` puts an invasion to your country. Your own vote is already counted.',
             `A freshly founded country cannot be attacked for ${formatDuration(invasions.newCountryProtection)}, so there is time to build up first — but attacking anyone gives that protection up.`,
+          ].join('\n'),
+          [
+            '**5. Or join them.** `/merge country:<name>` offers your whole country to another one. Both sides vote, and if both agree you become one country.',
+            'It is the only way to grow without fighting — and the only way to give a country away.',
           ].join('\n'),
           'The next thing to read is `/help topic:invasions`, because a war costs more than it looks like it will.',
         ],
@@ -191,6 +201,31 @@ function buildPages(
       },
     ],
 
+    merges: [
+      {
+        heading: '🤝 Merging',
+        blocks: [
+          '`/merge country:<name>` offers your country to another one. A country can be given away as well as taken — and the world counts it the same either way.',
+          [
+            `**Both countries vote.** Yours decides whether to make the offer, then theirs decides whether to take you in. Each side has ${formatDuration(merges.voteWindow)}, and each needs a strict majority.`,
+            'Your own `/merge` counts as your approval. If either side says no, or says nothing, nothing moves at all.',
+          ].join('\n'),
+          [
+            '**If both agree, the smaller country ends:**',
+            '• everyone in it joins the other country',
+            '• its whole stockpile goes with them',
+            '• its territories become theirs',
+            '• its channel becomes a read-only archive',
+          ].join('\n'),
+          [
+            '**Think before you accept.** The players you take in vote with you afterwards, so a big country joining a small one can end up deciding what the small one does.',
+            'Taking a country in also gives up new-country protection, exactly as marching on somebody does.',
+          ].join('\n'),
+          '**War outranks it.** A country in a war cannot offer or accept, and an invasion that starts mid-vote calls the merge off.',
+        ],
+      },
+    ],
+
     rules: [
       {
         heading: '📜 Rules',
@@ -209,7 +244,7 @@ function buildPages(
             'Late in a round there may be no room to found a new country, and joining an existing one is the way in. Existing countries can always be joined.',
           ].join('\n'),
           [
-            '**Winning.** There is one way to win, and it is total conquest: be the last country left, having taken every other country yourself. A rival that disbands on its own does not count — somebody has to beat it.',
+            '**Winning.** There is one way to win, and it is total conquest: be the last country left, having taken every other country yourself — beaten in war or handed over by `/merge`. A rival that disbands on its own does not count.',
             'Then everything is wiped and the next round starts from nothing.',
           ].join('\n'),
         ],

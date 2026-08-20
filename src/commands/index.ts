@@ -7,6 +7,7 @@ import {invadeCommand} from './invade.js';
 import {joinCommand} from './join.js';
 import {leaveCommand} from './leave.js';
 import {mapCommand} from './map.js';
+import {mergeCommand} from './merge.js';
 import {reinforceCommand, surrenderCommand} from './reinforce.js';
 import {resourcesCommand} from './resources.js';
 import {setupCommand} from './setup.js';
@@ -26,6 +27,7 @@ export const COMMANDS: readonly Command[] = [
   resourcesCommand,
   invadeCommand,
   defendCommand,
+  mergeCommand,
   reinforceCommand,
   surrenderCommand,
   gameCommand,

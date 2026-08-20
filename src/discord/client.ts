@@ -7,6 +7,8 @@ import {errorReply} from './ui.js';
 import {handleResetButton, isResetConfirmation} from './game-buttons.js';
 import {handleHelpButton, handleHelpSelect} from './help-buttons.js';
 import {isHelpComponent} from './help-ui.js';
+import {handleMergeButton} from './merge-buttons.js';
+import {isMergeComponent} from './merge-ui.js';
 import {handleVoteButton} from './vote-buttons.js';
 
 /**
@@ -85,6 +87,13 @@ export function registerInteractionHandler(
           await handleHelpButton(ctx.db, interaction);
         } else if (isResetConfirmation(interaction.customId)) {
           await handleResetButton(ctx.db, interaction.guild, interaction);
+        } else if (isMergeComponent(interaction.customId)) {
+          await handleMergeButton(
+            ctx.db,
+            interaction.guild,
+            interaction,
+            ctx.map,
+          );
         } else {
           await handleVoteButton(ctx.db, interaction.guild, interaction);
         }

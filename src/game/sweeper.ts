@@ -19,12 +19,14 @@ import {
   listWarsDueATick,
 } from '../db/invasions.js';
 import {getGuildIds} from '../db/guild-config.js';
+import {listExpiredMergeVotes} from '../db/merges.js';
 import {
   endWar,
   expireDefenseProposal,
   failAttack,
   fightRoundAndReport,
 } from './invasion-flow.js';
+import {expireMerge} from './merge-flow.js';
 import {concludeRound} from './round-flow.js';
 import {checkVictory} from './victory.js';
 
@@ -34,12 +36,14 @@ export interface SweepResult {
   votesExpired: number;
   /** Defence and reinforcement votes that ran out of time. */
   proposalsExpired: number;
-  /** Invasions nobody answered, which became voluntary merges. */
+  /** Invasions nobody answered, absorbed without a fight. */
   warsUnanswered: number;
   /** Rounds of fighting resolved. */
   roundsFought: number;
   /** Wars ended by a side failing to reinforce in time. */
   warsEnded: number;
+  /** Merge offers that ran out of time on one side or the other. */
+  mergesExpired: number;
   /** Rounds won and wiped clean. */
   roundsWon: number;
 }
@@ -71,6 +75,7 @@ export async function sweep(
   let warsUnanswered = 0;
   let roundsFought = 0;
   let warsEnded = 0;
+  let mergesExpired = 0;
   let roundsWon = 0;
 
   for (const invasion of listExpiredAttackVotes(db, now)) {
@@ -147,6 +152,18 @@ export async function sweep(
     }
   }
 
+  // An offer nobody answered lapses, on either side of it.
+  for (const merge of listExpiredMergeVotes(db, now)) {
+    const guild = await guildOf(client, merge.guildId);
+    if (!guild) continue;
+    try {
+      await expireMerge(db, guild, merge, now);
+      mergesExpired++;
+    } catch (error) {
+      console.error(`Could not expire merge ${merge.id}:`, error);
+    }
+  }
+
   // Victory is checked last, so a conquest resolved by this same sweep is
   // counted before the round is judged.
   for (const guildId of getGuildIds(db)) {
@@ -168,6 +185,7 @@ export async function sweep(
     warsUnanswered,
     roundsFought,
     warsEnded,
+    mergesExpired,
     roundsWon,
   };
 }

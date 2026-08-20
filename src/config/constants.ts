@@ -90,6 +90,15 @@ export const WAR = {
   reinforcementWindow: duration(6 * HOUR),
 } as const;
 
+/**
+ * A country may also be given away rather than taken: two countries can agree
+ * to become one, each side voting in turn.
+ */
+export const MERGES = {
+  /** How long each side of a merge has to vote before the offer lapses. */
+  voteWindow: duration(6 * HOUR),
+} as const;
+
 export const GAME = {
   /** How often the sweeper resolves expired votes, windows, and protections. */
   sweeperInterval: duration(30 * SECOND),

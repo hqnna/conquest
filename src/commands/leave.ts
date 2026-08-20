@@ -10,11 +10,21 @@ import {getCountry} from '../db/countries.js';
 import type {Database} from '../db/index.js';
 import {countCountryMembers, getPlayer, leaveCountry} from '../db/players.js';
 import {getPendingInvasionFor} from '../db/invasions.js';
+import {
+  cancelMergesFor,
+  discardPlayerMergeVotes,
+  getPendingMergeFor,
+} from '../db/merges.js';
 import {discardPlayerVotes} from '../db/votes.js';
 import {announce} from '../discord/log.js';
 import {stakeLine} from '../discord/invasion-ui.js';
 import {readAttackVote, readDefenseVote} from '../game/invasion-flow.js';
 import {cancelInvasion} from '../game/invasions.js';
+import {
+  abandonMerge,
+  readAcceptVote,
+  readOfferVote,
+} from '../game/merge-flow.js';
 import {ACCENT, container, relativeTime, v2EditReply} from '../discord/ui.js';
 import {disbandCountry, revokeCountryRole} from '../game/country-lifecycle.js';
 import {decideLeave} from '../game/policy.js';
@@ -46,10 +56,12 @@ export async function removePlayerFromCountry(
 
   const state = getCountry(db, guild.id, decision.code);
   const invasion = getPendingInvasionFor(db, guild.id, decision.code);
+  const merge = getPendingMergeFor(db, guild.id, decision.code);
 
   // Their ballots go with them, so any threshold is recounted over the
   // players who are actually still there.
   discardPlayerVotes(db, guild.id, userId);
+  discardPlayerMergeVotes(db, guild.id, userId);
   leaveCountry(db, {
     guildId: guild.id,
     userId,
@@ -90,6 +102,25 @@ export async function removePlayerFromCountry(
       await readAttackVote(db, guild, invasion, options.now);
     } else {
       await readDefenseVote(db, guild, invasion, options.now);
+    }
+  }
+
+  if (merge) {
+    if (decision.deactivates) {
+      // There is no country left to give away, or to give anything to.
+      cancelMergesFor(db, guild.id, decision.code, options.now);
+      await abandonMerge(
+        db,
+        guild,
+        merge,
+        `${countryName(decision.code)} has no players left, so there is nothing to merge.`,
+      );
+    } else if (merge.status === 'offer_vote') {
+      // The threshold moves with the country's size, so a departure can decide
+      // a vote that was still open.
+      await readOfferVote(db, guild, merge, options.now);
+    } else {
+      await readAcceptVote(db, guild, merge, options.now);
     }
   }
 

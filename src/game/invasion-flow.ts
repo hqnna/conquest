@@ -22,9 +22,8 @@ import {
 import type {Invasion, Side, StakeProposal} from '../db/invasions.js';
 import {countCountryMembers} from '../db/players.js';
 import {tallyVotes} from '../db/votes.js';
-import {announce, getGameLog} from '../discord/log.js';
-import {mapMessage, withMapImage} from '../discord/map-message.js';
-import {mapState} from '../map/index.js';
+import {announce} from '../discord/log.js';
+import {postWorldMap} from '../discord/map-message.js';
 import type {MapRenderer} from '../map/index.js';
 import {
   attackVoteCard,
@@ -40,19 +39,14 @@ import {
   warReportCard,
 } from '../discord/invasion-ui.js';
 import {ACCENT, container, v2Message} from '../discord/ui.js';
-import {
-  archiveCountryChannel,
-  grantCountryRole,
-  reassignArchive,
-  revokeCountryRole,
-} from './country-lifecycle.js';
+import {applyAbsorption} from './absorption.js';
+import {abandonMerge} from './merge-flow.js';
 import {
   concludeWar,
   escrowAndOpenDefense,
   escrowDefense,
   escrowReinforcement,
   fightWarRound,
-  recordArchive,
 } from './invasions.js';
 import type {ConclusionReport} from './invasions.js';
 import {readTally} from './voting.js';
@@ -179,6 +173,15 @@ export async function approveAttack(
       approved: true,
     }),
   );
+
+  for (const merge of escrow.cancelledMerges) {
+    await abandonMerge(
+      db,
+      guild,
+      merge,
+      'A war broke out before it could be made. A country cannot be handed over mid-battle.',
+    );
+  }
 
   await announce(db, guild, declarationCard(invasion, escrow.defenseDeadline));
 
@@ -516,36 +519,13 @@ export async function endWar(
   }
 
   await applyConquest(db, guild, invasion, report);
-  await postConquestMap(db, guild, map);
-}
-
-/**
- * Posts the world as it now stands, after a conquest has redrawn it.
- *
- * The map is the clearest way to see what an empire has become, so it follows
- * every conquest into the game log — and never blocks the conquest itself.
- */
-async function postConquestMap(
-  db: Database,
-  guild: Guild,
-  map?: MapRenderer,
-): Promise<void> {
-  if (!map) return;
-  try {
-    const rendered = await map.render(mapState(db, guild.id));
-    const log = await getGameLog(db, guild);
-    await log?.send(
-      mapMessage(
-        withMapImage(
-          container(ACCENT.attacker, '## The world has changed hands'),
-          'The world after the conquest',
-        ),
-        rendered.png,
-      ),
-    );
-  } catch (error) {
-    console.error(`Could not post the map for ${guild.id}:`, error);
-  }
+  await postWorldMap(
+    db,
+    guild,
+    '## The world has changed hands',
+    'The world after the conquest',
+    map,
+  );
 }
 
 /** The Discord half of a conquest: roles moved, channels archived. */
@@ -555,61 +535,21 @@ async function applyConquest(
   invasion: Invasion,
   report: ConclusionReport,
 ): Promise<void> {
-  const winnerRoleId = report.winnerRoleId;
+  await applyAbsorption(
+    db,
+    guild,
+    {
+      absorbedCode: invasion.defenderCode,
+      transferredPlayers: report.transferredPlayers,
+      capturedTerritories: report.capturedTerritories,
+      absorbedRoleId: report.defeatedRoleId,
+      absorbedChannelId: report.defeatedChannelId,
+      absorberRoleId: report.winnerRoleId,
+    },
+    `Conquest: ${invasion.defenderCode} conquered`,
+  );
+
   const defeated = findCountry(invasion.defenderCode);
-
-  if (winnerRoleId) {
-    for (const userId of report.transferredPlayers) {
-      const member = await guild.members.fetch(userId).catch(() => null);
-      if (!member) continue;
-      await grantCountryRole(
-        member,
-        winnerRoleId,
-        `Conquest: ${invasion.defenderCode} absorbed`,
-      ).catch(() => undefined);
-      if (report.defeatedRoleId) {
-        await revokeCountryRole(
-          member,
-          report.defeatedRoleId,
-          `Conquest: ${invasion.defenderCode} absorbed`,
-        ).catch(() => undefined);
-      }
-    }
-  }
-
-  if (report.defeatedChannelId && winnerRoleId && defeated) {
-    const channel = await guild.channels
-      .fetch(report.defeatedChannelId)
-      .catch(() => null);
-    if (channel?.type === ChannelType.GuildText) {
-      await archiveCountryChannel(guild, channel, defeated, winnerRoleId).catch(
-        () => undefined,
-      );
-      recordArchive(db, guild.id, invasion.defenderCode, channel.id);
-    }
-  }
-
-  // Everything the fallen country had taken changes hands with it.
-  for (const territory of report.capturedTerritories) {
-    if (territory.code === invasion.defenderCode) continue;
-    if (!territory.channelId || !winnerRoleId) continue;
-    const channel = await guild.channels
-      .fetch(territory.channelId)
-      .catch(() => null);
-    if (channel?.type === ChannelType.GuildText) {
-      await reassignArchive(guild, channel, winnerRoleId).catch(
-        () => undefined,
-      );
-    }
-  }
-
-  // Its role goes last: until now it was what let its people read the archive.
-  if (report.defeatedRoleId) {
-    await guild.roles
-      .delete(report.defeatedRoleId, `Conquest: ${invasion.defenderCode} fell`)
-      .catch(() => undefined);
-  }
-
   const winnerChannel = await channelOf(db, guild, invasion.attackerCode);
   await winnerChannel
     ?.send(

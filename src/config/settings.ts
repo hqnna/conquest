@@ -12,7 +12,7 @@
  * prints, and how a stored value is applied — so a new tunable cannot be
  * half-added.
  */
-import {COOLDOWNS, INVASIONS, RESOURCES, WAR} from './constants.js';
+import {COOLDOWNS, INVASIONS, MERGES, RESOURCES, WAR} from './constants.js';
 
 /** An inclusive range of whole numbers. */
 export interface Range {
@@ -51,6 +51,9 @@ export interface Settings {
     lossRateRange: Range;
     reinforcementWindow: number;
   };
+  merges: {
+    voteWindow: number;
+  };
 }
 
 /** The settings Conquest ships with, as a fresh mutable copy. */
@@ -84,6 +87,9 @@ export function defaultSettings(): Settings {
       baseLossRate: WAR.baseLossRate,
       lossRateRange: {...WAR.lossRateRange},
       reinforcementWindow: WAR.reinforcementWindow,
+    },
+    merges: {
+      voteWindow: MERGES.voteWindow,
     },
   };
 }
@@ -276,6 +282,18 @@ export const TUNABLES: readonly Tunable[] = [
         min: Math.min(settings.war.lossRateRange.min, fromPercent(value)),
         max: Math.max(settings.war.lossRateRange.max, fromPercent(value)),
       };
+    },
+  },
+  {
+    key: 'merge_vote_window',
+    label: 'Merge vote window',
+    description: 'How long each side of a merge has to vote on it.',
+    unit: 'minutes',
+    min: 1,
+    max: 7 * 24 * 60,
+    read: settings => asMinutes(settings.merges.voteWindow),
+    apply: (settings, value) => {
+      settings.merges.voteWindow = fromMinutes(value);
     },
   },
   {

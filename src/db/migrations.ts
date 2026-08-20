@@ -2,6 +2,7 @@ import type {Database} from 'better-sqlite3';
 import {migration as initialSchema} from './migrations/001-initial-schema.js';
 import {migration as invasionMessaging} from './migrations/002-invasion-messaging.js';
 import {migration as guildSettings} from './migrations/005-guild-settings.js';
+import {migration as merges} from './migrations/007-merges.js';
 import {migration as roundTracking} from './migrations/004-round-tracking.js';
 import {migration as totalConquest} from './migrations/006-total-conquest.js';
 import {migration as warsOfAttrition} from './migrations/003-wars-of-attrition.js';
@@ -24,6 +25,7 @@ export const MIGRATIONS: readonly Migration[] = [
   roundTracking,
   guildSettings,
   totalConquest,
+  merges,
 ];
 
 const MIGRATIONS_TABLE = `

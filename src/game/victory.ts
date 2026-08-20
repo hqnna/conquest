@@ -94,8 +94,10 @@ export function resetGame(
         .filter((id): id is string => id !== null),
     };
 
-    // Votes and proposals hang off invasions and go with them.
+    // Votes and proposals hang off invasions and go with them, as merge votes
+    // hang off merges.
     db.prepare('DELETE FROM invasions WHERE guild_id = ?').run(guildId);
+    db.prepare('DELETE FROM merges WHERE guild_id = ?').run(guildId);
     db.prepare('DELETE FROM countries WHERE guild_id = ?').run(guildId);
     db.prepare('DELETE FROM players WHERE guild_id = ?').run(guildId);
     clearCooldowns(db, guildId);

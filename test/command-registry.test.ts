@@ -16,6 +16,7 @@ describe('command registry', () => {
       'join',
       'leave',
       'map',
+      'merge',
       'mine',
       'recruit',
       'reinforce',

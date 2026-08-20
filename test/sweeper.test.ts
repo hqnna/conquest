@@ -14,6 +14,7 @@ import {
   listWarsDueATick,
 } from '../src/db/invasions.js';
 import type {Stake} from '../src/db/invasions.js';
+import {createMerge, listExpiredMergeVotes} from '../src/db/merges.js';
 import {joinCountry} from '../src/db/players.js';
 import {addResources, getStockpile} from '../src/db/resources.js';
 import {
@@ -189,6 +190,21 @@ describe('what the sweeper finds', () => {
     expect(listExpiredProposals(db, NOW + 1_000_000)).toEqual([]);
   });
 
+  it('finds a merge offer whose window ran out, and only then', () => {
+    const merge = createMerge(db, {
+      guildId: G,
+      fromCode: 'FR',
+      intoCode: 'DE',
+      proposerId: 'a1',
+      offerDeadline: NOW + 5_000,
+      now: NOW,
+    });
+    expect(listExpiredMergeVotes(db, NOW + 4_999)).toEqual([]);
+    expect(listExpiredMergeVotes(db, NOW + 5_000).map(m => m.id)).toEqual([
+      merge.id,
+    ]);
+  });
+
   it('works across guilds, since deadlines are absolute', () => {
     upsertGuildConfig(db, {
       guildId: 'g2',
@@ -236,6 +252,7 @@ describe('sweep', () => {
     expect(await sweep(db, absentClient, NOW)).toEqual({
       votesExpired: 0,
       proposalsExpired: 0,
+      mergesExpired: 0,
       warsUnanswered: 0,
       roundsFought: 0,
       warsEnded: 0,

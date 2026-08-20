@@ -25,6 +25,8 @@ describe('migrations', () => {
         'gather_cooldowns',
         'guild_config',
         'invasions',
+        'merge_votes',
+        'merges',
         'players',
         'schema_migrations',
         'votes',
@@ -68,7 +70,7 @@ describe('migrations', () => {
               ('g', 'war_tick', 5, 0)`,
     ).run();
 
-    expect(migrate(db, MIGRATIONS)).toEqual([6]);
+    expect(migrate(db, MIGRATIONS)).toEqual([6, 7]);
 
     expect(
       db.prepare('SELECT key FROM guild_settings ORDER BY key').all(),

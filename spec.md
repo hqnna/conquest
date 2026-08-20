@@ -102,9 +102,30 @@ An invasion is not settled in one roll. Once a defense takes the field, the two 
 
 ---
 
+## Merging (voluntary union)
+
+A country may also be given away rather than taken. `/merge country:<target>` puts a **merge offer** to the caller's own country; if it carries, the offer is put to the target country; only if **both** approve does anything move.
+
+1. Any player runs `/merge country:<target>`.
+   - Validations: caller is in an active country; target is active, not the caller's own, and not defeated; **neither country is in a pending invasion**; neither country already has a pending merge. Protections and cooldowns are irrelevant — nothing here is an attack. The caller's `/merge` counts as their approval.
+2. **Offer vote** in the offering country's channel (default 6h window, tunable): strict majority of that country's current players, read the same way as an attack vote — decided the moment the answer is certain, so a one-player country passes on its own.
+3. On approval, an **accept vote** opens in the target's channel (its own 6h window), pinging its role and showing what is on offer: the offering country's players, territories, and stockpile. The offering country consented to reveal that by offering.
+4. On approval of both, the union is made in one transaction, and it is exactly the conquest settlement: the offering country's stockpile, players, and territories become the target's; it is marked `defeated` with `owner_code` set to the absorber; its channel becomes the read-only archive; its role is deleted. Announced in the war room, with a fresh map.
+5. Rejection or silence on either side ends the offer and changes nothing.
+
+**Why both sides vote.** Transferred players vote in their new country afterwards, so a one-sided merge would let a large country walk into a small one and take it over from the inside — a conquest wearing a friendly face.
+
+**Absorbing voids new-country protection**, exactly as marching on somebody does: a country cannot shelter behind its youth while growing.
+
+**War outranks it.** A country in a pending invasion can neither offer nor accept; an invasion that escrows mid-vote cancels any merge either country was in, and both vote messages are closed; and the union is revalidated at the moment it is made, so a merge whose countries went to war (or stopped standing) is called off rather than dissolving an army mid-battle.
+
+**A merged country counts as conquered** for territory counts and for the win condition. Anything else would let a world that had merged into one country never end its round.
+
+---
+
 ## Win condition and reset
 
-- **Total conquest is the only way to win.** A country wins the moment it is the only active country left in the guild *and* it took at least one country by force. Both halves matter: the first country founded is alone until somebody else joins, and a lone survivor whose only rival quietly disbanded conquered nothing. There is no territory threshold and no last-country-standing clock — the round ends when one country holds every other, or it does not end.
+- **Total conquest is the only way to win.** A country wins the moment it is the only active country left in the guild *and* it holds at least one country it took — beaten in war, or handed over by a merge. Both halves matter: the first country founded is alone until somebody else joins, and a lone survivor whose only rival quietly disbanded conquered nothing. There is no territory threshold and no last-country-standing clock — the round ends when one country holds every other, or it does not end.
 - On win: post a victory announcement in the game log (winner, roster, territory list, game duration), then **reset**: delete **all country roles and all country channels** (active and archived), wipe all countries/players/resources/invasions for the guild, keep the setup config, and start fresh. Players must `/join` again.
 - Admin commands: `/game reset` (manual reset, confirm with a button).
 
@@ -123,6 +144,7 @@ An invasion is not settled in one roll. Once a defense takes the field, the two 
 | `/defend troops:<n> [gold] [food]` | Player (under invasion) | Start defense vote with a multi-resource stake |
 | `/reinforce troops:<n> [gold] [food]` | Player (force spent) | Vote to send fresh forces and continue the war |
 | `/surrender` | Player (force spent) | Give up the war immediately |
+| `/merge country:<t>` | Player | Offer your country to another one; both countries vote |
 | `/map` | Anyone | Rendered world-map image + legend in one V2 card; see Map rendering below |
 | `/country [name]` | Anyone | Details for one country (players, territories, protection/cooldown status; stockpile visible only to its own members) |
 | `/help [topic]` | Anyone | Paginated V2 help pages; see Help system below |
@@ -195,6 +217,8 @@ Render a flat world map image showing the game state, attached to the `/map` rep
 - `gather_cooldowns(guild_id, user_id, command, next_available_at)`
 - `invasions(id PK, guild_id, attacker_code, defender_code, attack_*, defense_* NULL, attack_field_*, defense_field_*, status ENUM[attack_vote, defense_window, war, reinforcing, resolved_attacker_win, resolved_defender_win, cancelled], attack_vote_deadline, defense_deadline, next_tick_at, reinforcing_side NULL, reinforce_deadline, rounds, attack_message_id, created_at, resolved_at)` — the `attack_*`/`defense_*` columns are everything a side has committed over the whole war and only grow with reinforcements; the `*_field_*` columns are what is still standing, and are what the rounds eat away.
 - `stake_proposals(id PK, invasion_id, side ENUM[attacker, defender], kind ENUM[defense, reinforcement], proposer_id, troops, gold, food, status ENUM[pending, approved, rejected, expired], vote_deadline, message_id, created_at, resolved_at)` — at most one pending proposal per invasion.
+- `merges(id PK, guild_id, from_code, into_code, proposer_id, status ENUM[offer_vote, accept_vote, completed, declined, expired, cancelled], offer_deadline, accept_deadline NULL, offer_message_id NULL, accept_message_id NULL, created_at, resolved_at)` — `from_code` is the country giving itself up, `into_code` the one absorbing it. At most one pending merge per country, on either side.
+- `merge_votes(id PK, merge_id, kind ENUM[offer, accept], user_id, choice ENUM[approve, reject], created_at)` — one row per voter per stage; changing a vote updates the row. Kept apart from `votes`, whose rows are keyed to an invasion and cascade with it.
 - `votes(id PK, invasion_id, kind ENUM[attack, defense], user_id, choice ENUM[approve, reject], created_at)` — one row per voter per vote; changing a vote updates the row. `kind` is the side, so an attacker's reinforcement vote is an `attack` vote; opening a new proposal clears that side's previous round of votes.
 
 All state-mutating operations (escrow, resolution, transfers) must be wrapped in transactions.

@@ -150,8 +150,8 @@ than failing.
    game log with the stake in full, and the defender's channel is pinged.
    Marching voids the attacker's own new-country protection.
 3. The defender has a window to `/defend`. **Ignoring an invasion loses it**:
-   if nothing is approved in time the country is absorbed as a voluntary
-   merge, and the attacker's army comes home untouched.
+   if nothing is approved in time the country is absorbed without a fight, and
+   the attacker's army comes home untouched.
 4. If a defence does take the field, the two forces grind each other down over
    hourly rounds. Losses are weighted by the enemy's power — supplies add up to
    +50%, home ground adds a fifth — so the outmatched side bleeds faster, and
@@ -172,10 +172,34 @@ A country's **territory count** is the land it holds: its own homeland plus
 every country it has conquered. A country that has taken nobody still holds
 one territory, its own.
 
+### Merging
+
+A country can also be given away. `/merge country:<name>` offers your country
+to another one, and it takes two votes: yours decides whether to make the
+offer, then theirs decides whether to accept it. Each side needs a strict
+majority within its window, the proposer's own approval is already counted,
+and if either side votes no — or says nothing — nothing moves.
+
+Both votes are needed on purpose. A one-sided merge would be a hostile
+takeover: the players who move in vote with their new country afterwards, so a
+large country walking into a small one would decide what the small one does
+from the inside.
+
+When it goes through, the merge does exactly what a conquest does, because it
+leaves the world in the same shape: the absorbed country's players, stockpile
+and territories all become the other country's, its channel becomes a
+read-only archive, and its role is deleted. Taking a country in voids the
+absorbing country's new-country protection, exactly as marching on somebody
+would.
+
+War outranks it. A country in a war can neither offer nor accept, and an
+invasion that reaches the field mid-vote calls the merge off in both channels.
+
 ### How a round ends
 
 There is one way to win, and it is **total conquest**: be the only country
-left active, having taken at least one country by force. Both halves matter.
+left active, having taken at least one country — beaten in war, or handed over
+by a merge. Both halves matter.
 The first country founded is the only active one until somebody else joins,
 and a lone survivor whose only rival disbanded on its own never conquered
 anything — neither wins a round.
@@ -224,10 +248,10 @@ Every server plays the shipped game until an admin changes something:
 /game reset-settings                 # restore everything
 ```
 
-Sixteen settings are tunable — gather and recruit cooldowns, recruit cost,
-rejoin and invasion cooldowns, the vote and defence windows, protections, the
-war round interval and reinforcement window, the per-round loss rate, home
-advantage, the supply cap, and both win conditions. Values are given in the
+Fifteen settings are tunable — gather and recruit cooldowns, recruit cost,
+rejoin and invasion cooldowns, the attack, defence, and merge vote windows,
+protections, the war round interval and reinforcement window, the per-round
+loss rate, home advantage, and the supply cap. Values are given in the
 units an admin thinks in — minutes, percent, or a count — and stored that way,
 so what comes back out is what somebody asked for.
 

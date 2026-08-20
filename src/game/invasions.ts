@@ -9,11 +9,7 @@
  * returns.
  */
 import {settingsFor} from '../db/guild-settings.js';
-import {
-  getCountry,
-  listTerritories,
-  setCountryChannel,
-} from '../db/countries.js';
+import {getCountry, listTerritories} from '../db/countries.js';
 import type {CountryState} from '../db/countries.js';
 import type {Database} from '../db/index.js';
 import {
@@ -31,6 +27,8 @@ import {
   recordRound,
 } from '../db/invasions.js';
 import type {Invasion, Side, Stake, StakeProposal} from '../db/invasions.js';
+import {cancelMergesFor} from '../db/merges.js';
+import type {Merge} from '../db/merges.js';
 import {countCountryMembers, transferPlayers} from '../db/players.js';
 import {
   addResources,
@@ -207,12 +205,17 @@ export type EscrowFailure = {kind: 'cannot_afford'; stockpile: Stockpile};
  * cannot promise the same troops to two wars or spend them while the fighting
  * is on. If the stockpile has fallen below the stake since the declaration,
  * the invasion is called off instead of marching an army that does not exist.
+ *
+ * War outranks paperwork: any merge either country was still voting on is
+ * called off here, because a country cannot be handed over mid-battle.
  */
 export function escrowAndOpenDefense(
   db: Database,
   invasion: Invasion,
   now: number,
-): {ok: true; defenseDeadline: number} | {ok: false; failure: EscrowFailure} {
+):
+  | {ok: true; defenseDeadline: number; cancelledMerges: Merge[]}
+  | {ok: false; failure: EscrowFailure} {
   return db.transaction(() => {
     const paid = spendResources(
       db,
@@ -241,10 +244,15 @@ export function escrowAndOpenDefense(
       'UPDATE countries SET protected_until = NULL WHERE guild_id = ? AND code = ?',
     ).run(invasion.guildId, invasion.attackerCode);
 
+    const cancelledMerges = [
+      ...cancelMergesFor(db, invasion.guildId, invasion.attackerCode, now),
+      ...cancelMergesFor(db, invasion.guildId, invasion.defenderCode, now),
+    ];
+
     const defenseDeadline =
       now + settingsFor(db, invasion.guildId).invasions.defenseWindow;
     openDefenseWindow(db, invasion.id, invasion.attack, defenseDeadline);
-    return {ok: true as const, defenseDeadline};
+    return {ok: true as const, defenseDeadline, cancelledMerges};
   })();
 }
 
@@ -741,16 +749,6 @@ export function cancelInvasion(
     if (pending) finishProposal(db, pending.id, 'expired', now);
     finishInvasion(db, invasion.id, 'cancelled', now);
   })();
-}
-
-/** Records where a defeated country's archive lives after a conquest. */
-export function recordArchive(
-  db: Database,
-  guildId: string,
-  code: string,
-  channelId: string,
-): void {
-  setCountryChannel(db, guildId, code, channelId);
 }
 
 /** Players in a country right now, for reading a vote against its size. */
